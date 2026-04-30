@@ -1,0 +1,17 @@
+ALTER TABLE respuestas
+  ADD COLUMN nombre_apellido TEXT,
+  ADD COLUMN calle_numero TEXT,
+  ADD COLUMN piso_departamento TEXT,
+  ADD COLUMN localidad TEXT,
+  ADD COLUMN codigo_postal TEXT,
+  ADD COLUMN provincia TEXT,
+  ADD COLUMN email TEXT,
+  ADD COLUMN telefono TEXT,
+  ADD COLUMN concesionario_sede TEXT,
+  ADD COLUMN maquina_modelo TEXT,
+  ADD COLUMN nombre_firma_factura TEXT,
+  ADD COLUMN calificacion_entrega_presentacion SMALLINT CHECK (calificacion_entrega_presentacion BETWEEN 1 AND 10),
+  ADD COLUMN calificacion_puesta_marcha SMALLINT CHECK (calificacion_puesta_marcha BETWEEN 1 AND 10),
+  ADD COLUMN calificacion_capacitacion SMALLINT CHECK (calificacion_capacitacion BETWEEN 1 AND 10),
+  ADD COLUMN calificacion_funcionamiento_general SMALLINT CHECK (calificacion_funcionamiento_general BETWEEN 1 AND 10),
+  ADD COLUMN calificacion_tecnico SMALLINT CHECK (calificacion_tecnico BETWEEN 1 AND 10);
