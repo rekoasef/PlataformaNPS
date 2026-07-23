@@ -16,7 +16,7 @@ export async function getRespuestasRambla(
   const columnaFecha = filtros?.tipo === 'envio' ? 'fecha_envio' : 'fecha_respuesta'
 
   let query = supabase
-    .from('respuestas')
+    .from('v_respuestas_rambla')
     .select(SELECT_COLS, { count: 'exact' })
     .order('fecha_respuesta', { ascending: false })
     .range(from, to)
@@ -42,7 +42,7 @@ export async function getRegaloStats(filtros?: RamblaFiltros): Promise<RegaloSta
   if (filtros?.tipo === 'envio') {
     // En modo envío solo hay registros con estado=enviado (fecha_envio solo existe para esos)
     let q = supabase
-      .from('respuestas')
+      .from('v_respuestas_rambla')
       .select('*', { count: 'exact', head: true })
       .eq('regalo_estado', 'enviado')
 
@@ -57,12 +57,12 @@ export async function getRegaloStats(filtros?: RamblaFiltros): Promise<RegaloSta
 
   // Modo respuesta (default): filtrar por fecha_respuesta
   let qPendientes = supabase
-    .from('respuestas')
+    .from('v_respuestas_rambla')
     .select('*', { count: 'exact', head: true })
     .eq('regalo_estado', 'pendiente_envio')
 
   let qEnviados = supabase
-    .from('respuestas')
+    .from('v_respuestas_rambla')
     .select('*', { count: 'exact', head: true })
     .eq('regalo_estado', 'enviado')
 
@@ -93,7 +93,7 @@ export async function exportarRespuestasRambla(filtros?: RamblaFiltros): Promise
   const columnaFecha = filtros?.tipo === 'envio' ? 'fecha_envio' : 'fecha_respuesta'
 
   let query = supabase
-    .from('respuestas')
+    .from('v_respuestas_rambla')
     .select(SELECT_COLS)
     .order('fecha_respuesta', { ascending: false })
 

@@ -2,7 +2,7 @@
 
 import { z } from 'zod'
 import { createSupabaseAdmin } from '@/lib/supabase/server'
-import { enviarAlertaNpsCritico } from '@/modules/alertas/services/alertas.service'
+import { enviarAlertaNpsCritico, enviarNotificacionRambla } from '@/modules/alertas/services/alertas.service'
 import { CONCESIONARIOS, MAQUINAS, getTipoMaquina } from './form-options'
 
 const RespuestaFinGarantiaSchema = z.object({
@@ -73,7 +73,7 @@ export async function guardarRespuestaFinGarantiaAction(
 
   const { data: encuesta } = await supabase
     .from('encuestas')
-    .select('id, estado')
+    .select('id, estado, campanas(tipos_encuesta(envia_regalo))')
     .eq('token', result.data.token)
     .single()
 
@@ -130,6 +130,10 @@ export async function guardarRespuestaFinGarantiaAction(
   const nombre = result.data.nombre_apellido
   const concesionario = result.data.concesionario_sede
 
+  const campana = Array.isArray(encuesta.campanas) ? encuesta.campanas[0] : encuesta.campanas
+  const tipoEncuesta = Array.isArray(campana?.tipos_encuesta) ? campana.tipos_encuesta[0] : campana?.tipos_encuesta
+  const enviaRegalo = tipoEncuesta?.envia_regalo ?? false
+
   try {
     const inserts: Promise<unknown>[] = [
       Promise.resolve(supabase.from('notificaciones').insert({
@@ -140,6 +144,29 @@ export async function guardarRespuestaFinGarantiaAction(
         metadata: { nombre, concesionario, tipo_encuesta: 'fin_garantia' },
       })),
     ]
+
+    if (enviaRegalo) {
+      inserts.push(
+        Promise.resolve(supabase.from('notificaciones').insert({
+          tipo: 'regalo_pendiente',
+          titulo: 'Nuevo regalo pendiente',
+          mensaje: `${nombre} completó la encuesta. Hay un nuevo regalo pendiente de envío.`,
+          para_rol: 'rambla',
+          metadata: { nombre, concesionario },
+        })),
+        enviarNotificacionRambla({
+          nombreApellido: result.data.nombre_apellido,
+          calleNumero: result.data.calle_numero,
+          pisoDepartamento: result.data.piso_departamento || null,
+          localidad: result.data.localidad,
+          codigoPostal: result.data.codigo_postal,
+          provincia: result.data.provincia,
+          email: result.data.email,
+          telefono: result.data.telefono,
+          concesionario: result.data.concesionario_sede,
+        }).catch((err) => console.error('Notificación Rambla email fallida', err))
+      )
+    }
 
     if (esNPSCritico) {
       const npsList: string[] = []

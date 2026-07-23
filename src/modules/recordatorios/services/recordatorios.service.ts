@@ -1,12 +1,34 @@
 import { createSupabaseServer } from '@/lib/supabase/server'
 import type {
   ClientePendienteRecordatorio,
+  EncuestaMedida,
   EncuestaNecesidadLlamado,
   EncuestaSinRespuesta,
   PuedeCrearRecordatorioResult,
   RecordatorioResumen,
 } from '../types/recordatorio.types'
 import { syncWorkflowEstados } from './workflow.service'
+
+function mapMedidas(
+  raw:
+    | {
+        id: string
+        comentario: string
+        created_at: string
+        created_by: string | null
+        updated_at: string
+      }[]
+    | null
+    | undefined
+): EncuestaMedida[] {
+  return (raw ?? []).map((medida) => ({
+    id: medida.id,
+    comentario: medida.comentario,
+    createdAt: medida.created_at,
+    createdBy: medida.created_by,
+    updatedAt: medida.updated_at,
+  }))
+}
 
 export async function getRecordatoriosByCampana(campanaId: string): Promise<RecordatorioResumen[]> {
   await syncWorkflowEstados()
@@ -188,10 +210,12 @@ export async function getEncuestasNecesidadLlamado(
       token,
       estado,
       campanas(id, nombre, fecha),
-      clientes(id, nombre, telefono, telefono_2, telefono_3, concesionario, orden_fabricacion)
+      clientes(id, nombre, telefono, telefono_2, telefono_3, concesionario, orden_fabricacion),
+      encuesta_medidas(id, comentario, created_at, created_by, updated_at)
     `, { count: 'exact' })
     .eq('estado', 'necesidad_de_llamado')
     .order('created_at', { ascending: true })
+    .order('created_at', { ascending: true, referencedTable: 'encuesta_medidas' })
     .range(from, to)
 
   if (error) throw error
@@ -203,6 +227,7 @@ export async function getEncuestasNecesidadLlamado(
       estado: 'necesidad_de_llamado',
       campana: Array.isArray(item.campanas) ? item.campanas[0] ?? null : item.campanas,
       cliente: Array.isArray(item.clientes) ? item.clientes[0] ?? null : item.clientes,
+      medidas: mapMedidas(item.encuesta_medidas),
     })),
     total: count ?? 0,
   }
@@ -219,10 +244,12 @@ export async function getEncuestasSinRespuesta(): Promise<EncuestaSinRespuesta[]
       comentario_sin_respuesta,
       marcado_sin_respuesta_at,
       campanas(id, nombre, fecha),
-      clientes(id, nombre, telefono, telefono_2, telefono_3, concesionario, orden_fabricacion)
+      clientes(id, nombre, telefono, telefono_2, telefono_3, concesionario, orden_fabricacion),
+      encuesta_medidas(id, comentario, created_at, created_by, updated_at)
     `)
     .eq('estado', 'sin_respuesta')
     .order('marcado_sin_respuesta_at', { ascending: false })
+    .order('created_at', { ascending: true, referencedTable: 'encuesta_medidas' })
 
   if (error) throw error
 
@@ -234,7 +261,38 @@ export async function getEncuestasSinRespuesta(): Promise<EncuestaSinRespuesta[]
     marcadoAt: item.marcado_sin_respuesta_at,
     campana: Array.isArray(item.campanas) ? item.campanas[0] ?? null : item.campanas,
     cliente: Array.isArray(item.clientes) ? item.clientes[0] ?? null : item.clientes,
+    medidas: mapMedidas(item.encuesta_medidas),
   }))
+}
+
+export async function agregarMedidaLlamado(
+  encuestaId: string,
+  comentario: string,
+  creadoPor: string | null
+) {
+  const supabase = await createSupabaseServer()
+  const { error } = await supabase
+    .from('encuesta_medidas')
+    .insert({ encuesta_id: encuestaId, comentario, created_by: creadoPor })
+
+  if (error) throw error
+}
+
+export async function actualizarMedidaLlamado(medidaId: string, comentario: string) {
+  const supabase = await createSupabaseServer()
+  const { error } = await supabase
+    .from('encuesta_medidas')
+    .update({ comentario })
+    .eq('id', medidaId)
+
+  if (error) throw error
+}
+
+export async function eliminarMedidaLlamado(medidaId: string) {
+  const supabase = await createSupabaseServer()
+  const { error } = await supabase.from('encuesta_medidas').delete().eq('id', medidaId)
+
+  if (error) throw error
 }
 
 export async function marcarEncuestaSinRespuesta(

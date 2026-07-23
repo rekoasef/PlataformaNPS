@@ -11,7 +11,8 @@ import {
   YAxis,
 } from 'recharts'
 import { Card, CardContent, CardHeader } from '@/components/ui/Card'
-import type { CalificacionResumen } from '../services/dashboard.service'
+import type { CalificacionesPorTipo, CalificacionResumen } from '../services/dashboard.service'
+import TipoEncuestaBadge from './TipoEncuestaBadge'
 
 // Score 1-10 → color ramp (rojo → amarillo → verde)
 const SCORE_RAMP = [
@@ -130,43 +131,63 @@ function DistribucionMiniChart({ calificacion }: { calificacion: CalificacionRes
 }
 
 interface CalificacionesPanelProps {
-  calificaciones: CalificacionResumen[]
+  data: CalificacionesPorTipo[]
 }
 
-export default function CalificacionesPanel({ calificaciones }: CalificacionesPanelProps) {
-  const conDatos = calificaciones.some((c) => c.total > 0)
+export default function CalificacionesPanel({ data }: CalificacionesPanelProps) {
+  if (data.length === 0) return null
 
   return (
     <div className="space-y-4">
-      <Card>
-        <CardHeader>
-          <h2 className="text-sm font-semibold text-foreground">Promedio por pregunta</h2>
-        </CardHeader>
-        <CardContent>
-          {!conDatos ? (
-            <p className="py-8 text-center text-sm text-muted-foreground">Sin datos para mostrar.</p>
-          ) : (
-            <PromediosChart calificaciones={calificaciones} />
-          )}
-        </CardContent>
-      </Card>
+      <div className="space-y-3">
+        <h2 className="text-sm font-semibold text-foreground">Promedio por pregunta</h2>
+        <div className={`grid gap-4 ${data.length > 1 ? 'lg:grid-cols-2' : ''}`}>
+          {data.map(({ tipo, calificaciones }) => {
+            const conDatos = calificaciones.some((c) => c.total > 0)
+            return (
+              <Card key={tipo.id}>
+                <CardHeader>
+                  <TipoEncuestaBadge tipo={tipo} />
+                </CardHeader>
+                <CardContent>
+                  {!conDatos ? (
+                    <p className="py-8 text-center text-sm text-muted-foreground">Sin datos para mostrar.</p>
+                  ) : (
+                    <PromediosChart calificaciones={calificaciones} />
+                  )}
+                </CardContent>
+              </Card>
+            )
+          })}
+        </div>
+      </div>
 
-      <Card>
-        <CardHeader>
-          <h2 className="text-sm font-semibold text-foreground">Distribución de respuestas por score</h2>
-        </CardHeader>
-        <CardContent>
-          {!conDatos ? (
-            <p className="py-8 text-center text-sm text-muted-foreground">Sin datos para mostrar.</p>
-          ) : (
-            <div className="grid grid-cols-2 gap-x-8 gap-y-6 sm:grid-cols-4">
-              {calificaciones.map((c) => (
-                <DistribucionMiniChart key={c.key} calificacion={c} />
-              ))}
-            </div>
-          )}
-        </CardContent>
-      </Card>
+      <div className="space-y-3">
+        <h2 className="text-sm font-semibold text-foreground">Distribución de respuestas por score</h2>
+        <div className={`grid gap-4 ${data.length > 1 ? 'lg:grid-cols-2' : ''}`}>
+          {data.map(({ tipo, calificaciones }) => {
+            const conDatos = calificaciones.some((c) => c.total > 0)
+            return (
+              <Card key={tipo.id}>
+                <CardHeader>
+                  <TipoEncuestaBadge tipo={tipo} />
+                </CardHeader>
+                <CardContent>
+                  {!conDatos ? (
+                    <p className="py-8 text-center text-sm text-muted-foreground">Sin datos para mostrar.</p>
+                  ) : (
+                    <div className="grid grid-cols-2 gap-x-6 gap-y-5 sm:grid-cols-3">
+                      {calificaciones.map((c) => (
+                        <DistribucionMiniChart key={c.key} calificacion={c} />
+                      ))}
+                    </div>
+                  )}
+                </CardContent>
+              </Card>
+            )
+          })}
+        </div>
+      </div>
     </div>
   )
 }

@@ -6,6 +6,8 @@ import { Card, CardContent, CardHeader } from '@/components/ui/Card'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/Table'
 import CambiarEstadoForm from '@/modules/campanas/components/CambiarEstadoForm'
 import EliminarCampanaForm from '@/modules/campanas/components/EliminarCampanaForm'
+import EliminarEncuestaForm from '@/modules/campanas/components/EliminarEncuestaForm'
+import { createSupabaseServer } from '@/lib/supabase/server'
 import RecordatoriosTimeline from '@/modules/recordatorios/components/RecordatoriosTimeline'
 import { getRecordatoriosByCampana, puedeCrearRecordatorio } from '@/modules/recordatorios/services/recordatorios.service'
 import { formatTecnologia } from '@/lib/utils/tecnologia'
@@ -35,7 +37,9 @@ export default async function CampanaDetallePage({
   params: Promise<{ id: string }>
 }) {
   const { id } = await params
-  const [campana, encuestas, recordatorios, permisoRecordatorio, jobsWA, plantillasWA] = await Promise.all([
+  const supabase = await createSupabaseServer()
+  const [{ data: { user } }, campana, encuestas, recordatorios, permisoRecordatorio, jobsWA, plantillasWA] = await Promise.all([
+    supabase.auth.getUser(),
     getCampanaById(id).catch(() => null),
     getCampanaConEncuestas(id),
     getRecordatoriosByCampana(id),
@@ -43,6 +47,7 @@ export default async function CampanaDetallePage({
     getJobsByCampana(id),
     getPlantillas(),
   ])
+  const esAdmin = ((user?.app_metadata?.role as string | undefined) ?? 'admin') === 'admin'
 
   if (!campana) notFound()
 
@@ -142,6 +147,7 @@ export default async function CampanaDetallePage({
                   <TableHead>Tecnología</TableHead>
                   <TableHead>Estado</TableHead>
                   <TableHead>Link</TableHead>
+                  {esAdmin && <TableHead>Acciones</TableHead>}
                 </TableRow>
               </TableHeader>
               <TableBody>
@@ -165,6 +171,11 @@ export default async function CampanaDetallePage({
                         title={`${APP_URL}/encuesta?token=${e.token}`}
                       />
                     </TableCell>
+                    {esAdmin && (
+                      <TableCell>
+                        <EliminarEncuestaForm encuestaId={e.id} clienteNombre={e.clientes?.nombre ?? 'este cliente'} />
+                      </TableCell>
+                    )}
                   </TableRow>
                 ))}
               </TableBody>

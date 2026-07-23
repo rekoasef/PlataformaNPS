@@ -2,14 +2,16 @@ import PageContainer from '@/components/layout/PageContainer'
 import { Card, CardContent, CardHeader } from '@/components/ui/Card'
 import ConfigForm from '@/modules/configuracion/components/ConfigForm'
 import UsuariosPanel from '@/modules/configuracion/components/UsuariosPanel'
+import TiposEncuestaPanel from '@/modules/configuracion/components/TiposEncuestaPanel'
 import ConfigTabs from '@/modules/configuracion/components/ConfigTabs'
-import { getSystemConfig } from '@/modules/configuracion/services/configuracion.service'
+import { getSystemConfig, getTiposEncuesta } from '@/modules/configuracion/services/configuracion.service'
 import { listUsers } from '@/modules/configuracion/services/usuarios.service'
 import { createSupabaseServer } from '@/lib/supabase/server'
 
 export default async function ConfiguracionPage() {
-  const [config, users, supabase] = await Promise.all([
+  const [config, tiposEncuesta, users, supabase] = await Promise.all([
     getSystemConfig(),
+    getTiposEncuesta(),
     listUsers(),
     createSupabaseServer(),
   ])
@@ -34,8 +36,9 @@ export default async function ConfiguracionPage() {
       ) : (
         <ConfigTabs
           configTab={
-            <div className="max-w-3xl">
+            <div className="max-w-3xl space-y-6">
               <ConfigForm config={config} />
+              <TiposEncuestaPanel tipos={tiposEncuesta} />
             </div>
           }
           usuariosTab={

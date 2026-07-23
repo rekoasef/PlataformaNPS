@@ -134,6 +134,41 @@ export type Database = {
         }
         Relationships: []
       }
+      encuesta_medidas: {
+        Row: {
+          comentario: string
+          created_at: string
+          created_by: string | null
+          encuesta_id: string
+          id: string
+          updated_at: string
+        }
+        Insert: {
+          comentario: string
+          created_at?: string
+          created_by?: string | null
+          encuesta_id: string
+          id?: string
+          updated_at?: string
+        }
+        Update: {
+          comentario?: string
+          created_at?: string
+          created_by?: string | null
+          encuesta_id?: string
+          id?: string
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "encuesta_medidas_encuesta_id_fkey"
+            columns: ["encuesta_id"]
+            isOneToOne: false
+            referencedRelation: "encuestas"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       encuestas: {
         Row: {
           campana_id: string
@@ -623,6 +658,7 @@ export type Database = {
           activo: boolean
           config: Json | null
           created_at: string
+          envia_regalo: boolean
           id: string
           introduccion: string | null
           nombre: string
@@ -633,6 +669,7 @@ export type Database = {
           activo?: boolean
           config?: Json | null
           created_at?: string
+          envia_regalo?: boolean
           id?: string
           introduccion?: string | null
           nombre: string
@@ -643,6 +680,7 @@ export type Database = {
           activo?: boolean
           config?: Json | null
           created_at?: string
+          envia_regalo?: boolean
           id?: string
           introduccion?: string | null
           nombre?: string
@@ -680,6 +718,48 @@ export type Database = {
           campana_nombre: string | null
           nps_empresa_score: number | null
           total_respuestas: number | null
+        }
+        Relationships: []
+      }
+      v_respuestas_rambla: {
+        Row: {
+          calificacion_capacitacion: number | null
+          calificacion_entrega_presentacion: number | null
+          calificacion_funcionamiento_anual: number | null
+          calificacion_funcionamiento_general: number | null
+          calificacion_puesta_marcha: number | null
+          calificacion_resolucion_problemas: number | null
+          calificacion_tecnico: number | null
+          calle_numero: string | null
+          canal_respuesta: string | null
+          codigo_postal: string | null
+          comentario_concesionario: string | null
+          comentario_empresa: string | null
+          comentario_general: string | null
+          comentario_problemas: string | null
+          comentario_producto: string | null
+          concesionario_sede: string | null
+          email: string | null
+          encuesta_id: string | null
+          fecha_envio: string | null
+          fecha_respuesta: string | null
+          fecha_seguimiento: string | null
+          id: string | null
+          localidad: string | null
+          maquina_modelo: string | null
+          nombre_apellido: string | null
+          nombre_firma_factura: string | null
+          nps_concesionario: number | null
+          nps_empresa: number | null
+          nps_producto: number | null
+          numero_seguimiento: string | null
+          piso_departamento: string | null
+          provincia: string | null
+          regalo_estado: Database["public"]["Enums"]["regalo_estado"] | null
+          respuestas_raw: Json | null
+          telefono: string | null
+          tipo_maquina: Database["public"]["Enums"]["tipo_maquina_enum"] | null
+          tuvo_problemas_tecnicos: boolean | null
         }
         Relationships: []
       }

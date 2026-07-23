@@ -49,6 +49,8 @@ type RawEncuestaConRespuesta = {
         calificacion_entrega_presentacion: number | null
         calificacion_capacitacion: number | null
         calificacion_tecnico: number | null
+        calificacion_funcionamiento_anual: number | null
+        calificacion_resolucion_problemas: number | null
         nps_producto: number
         nps_empresa: number
         nps_concesionario: number
@@ -74,6 +76,8 @@ type RawEncuestaConRespuesta = {
         calificacion_entrega_presentacion: number | null
         calificacion_capacitacion: number | null
         calificacion_tecnico: number | null
+        calificacion_funcionamiento_anual: number | null
+        calificacion_resolucion_problemas: number | null
         nps_producto: number
         nps_empresa: number
         nps_concesionario: number
@@ -112,6 +116,8 @@ export type RespuestaDetalle = {
   calificacionEntregaPresentacion: number | null
   calificacionCapacitacion: number | null
   calificacionTecnico: number | null
+  calificacionFuncionamientoAnual: number | null
+  calificacionResolucionProblemas: number | null
   npsProducto: number
   npsEmpresa: number
   npsConcesionario: number
@@ -245,6 +251,8 @@ function mapRespuesta(row: RawEncuestaConRespuesta): RespuestaDetalle | null {
     calificacionEntregaPresentacion: respuesta.calificacion_entrega_presentacion,
     calificacionCapacitacion: respuesta.calificacion_capacitacion,
     calificacionTecnico: respuesta.calificacion_tecnico,
+    calificacionFuncionamientoAnual: respuesta.calificacion_funcionamiento_anual,
+    calificacionResolucionProblemas: respuesta.calificacion_resolucion_problemas,
     npsProducto: respuesta.nps_producto,
     npsEmpresa: respuesta.nps_empresa,
     npsConcesionario: respuesta.nps_concesionario,
@@ -293,6 +301,8 @@ export async function getRespuestas(filters: DashboardFilters = {}) {
         calificacion_entrega_presentacion,
         calificacion_capacitacion,
         calificacion_tecnico,
+        calificacion_funcionamiento_anual,
+        calificacion_resolucion_problemas,
         nps_producto,
         nps_empresa,
         nps_concesionario,
@@ -431,6 +441,24 @@ export async function getNpsPorConcesionario(filters: DashboardFilters = {}): Pr
     })
 }
 
+export type ConcesionarioNpsPorTipo = {
+  tipo: TipoEncuestaRef
+  rows: ConcesionarioNpsRow[]
+}
+
+export async function getNpsPorConcesionarioPorTipoEncuesta(
+  filters: DashboardFilters = {}
+): Promise<ConcesionarioNpsPorTipo[]> {
+  const tipos = await getTiposEncuestaActivos(filters.tipoEncuestaId)
+
+  return Promise.all(
+    tipos.map(async (tipo) => ({
+      tipo,
+      rows: await getNpsPorConcesionario({ ...filters, tipoEncuestaId: tipo.id }),
+    }))
+  )
+}
+
 function calcularDistribucion(label: string, values: number[]): NpsDistribucionRow {
   const total = values.length
   const promotores = values.filter((value) => value >= 9).length
@@ -463,6 +491,24 @@ export async function getNpsDistribucion(filters: DashboardFilters = {}): Promis
     calcularDistribucion('Concesionario', respuestas.map((item) => item.npsConcesionario)),
     calcularDistribucion('Empresa', respuestas.map((item) => item.npsEmpresa)),
   ]
+}
+
+export type NpsDistribucionPorTipo = {
+  tipo: TipoEncuestaRef
+  distribucion: NpsDistribucionRow[]
+}
+
+export async function getNpsDistribucionPorTipoEncuesta(
+  filters: DashboardFilters = {}
+): Promise<NpsDistribucionPorTipo[]> {
+  const tipos = await getTiposEncuestaActivos(filters.tipoEncuestaId)
+
+  return Promise.all(
+    tipos.map(async (tipo) => ({
+      tipo,
+      distribucion: await getNpsDistribucion({ ...filters, tipoEncuestaId: tipo.id }),
+    }))
+  )
 }
 
 export async function getNpsResumenExtendido(
@@ -549,25 +595,33 @@ export async function getEfectividadEnvios(
   }
 }
 
-const CALIFICACIONES_CONFIG: Array<{
-  key: keyof RespuestaDetalle
-  label: string
-  labelCorto: string
-}> = [
-  { key: 'calificacionEntregaPresentacion', label: 'Entrega y presentación', labelCorto: 'Entrega' },
-  { key: 'calificacionCapacitacion', label: 'Capacitación', labelCorto: 'Capacitación' },
-  { key: 'calificacionTecnico', label: 'Técnico', labelCorto: 'Técnico' },
+type CalificacionConfigItem = { key: keyof RespuestaDetalle; label: string; labelCorto: string }
+
+const CALIFICACIONES_COMPARTIDAS: CalificacionConfigItem[] = [
   { key: 'npsConcesionario', label: 'NPS concesionario', labelCorto: 'NPS Concesion.' },
   { key: 'npsProducto', label: 'NPS producto', labelCorto: 'NPS Producto' },
   { key: 'npsEmpresa', label: 'NPS empresa', labelCorto: 'NPS Empresa' },
 ]
 
-export async function getCalificacionesResumen(
-  filters: DashboardFilters = {}
-): Promise<CalificacionResumen[]> {
-  const respuestas = await getRespuestas(filters)
+const CALIFICACIONES_POR_SLUG: Record<string, CalificacionConfigItem[]> = {
+  inicio_garantia: [
+    { key: 'calificacionEntregaPresentacion', label: 'Entrega y presentación', labelCorto: 'Entrega' },
+    { key: 'calificacionCapacitacion', label: 'Capacitación', labelCorto: 'Capacitación' },
+    { key: 'calificacionTecnico', label: 'Técnico', labelCorto: 'Técnico' },
+    ...CALIFICACIONES_COMPARTIDAS,
+  ],
+  fin_garantia: [
+    { key: 'calificacionFuncionamientoAnual', label: 'Funcionamiento anual', labelCorto: 'Func. Anual' },
+    { key: 'calificacionResolucionProblemas', label: 'Resolución de problemas', labelCorto: 'Resol. Problemas' },
+    ...CALIFICACIONES_COMPARTIDAS,
+  ],
+}
 
-  return CALIFICACIONES_CONFIG.map(({ key, label, labelCorto }) => {
+function calcularCalificaciones(
+  respuestas: RespuestaDetalle[],
+  config: CalificacionConfigItem[]
+): CalificacionResumen[] {
+  return config.map(({ key, label, labelCorto }) => {
     const values = respuestas
       .map((r) => r[key] as number | null)
       .filter((v): v is number => v !== null)
@@ -588,6 +642,44 @@ export async function getCalificacionesResumen(
 
     return { key, label, labelCorto, promedio, total, distribucion }
   })
+}
+
+export type TipoEncuestaRef = { id: string; nombre: string; slug: string }
+
+async function getTiposEncuestaActivos(tipoEncuestaId?: string): Promise<TipoEncuestaRef[]> {
+  const supabase = await createSupabaseServer()
+
+  let query = supabase
+    .from('tipos_encuesta')
+    .select('id, nombre, slug')
+    .eq('activo', true)
+    .order('created_at')
+
+  if (tipoEncuestaId) {
+    query = query.eq('id', tipoEncuestaId)
+  }
+
+  const { data } = await query
+  return data ?? []
+}
+
+export type CalificacionesPorTipo = {
+  tipo: TipoEncuestaRef
+  calificaciones: CalificacionResumen[]
+}
+
+export async function getCalificacionesPorTipoEncuesta(
+  filters: DashboardFilters = {}
+): Promise<CalificacionesPorTipo[]> {
+  const tipos = await getTiposEncuestaActivos(filters.tipoEncuestaId)
+
+  return Promise.all(
+    tipos.map(async (tipo) => {
+      const respuestas = await getRespuestas({ ...filters, tipoEncuestaId: tipo.id })
+      const config = CALIFICACIONES_POR_SLUG[tipo.slug] ?? CALIFICACIONES_COMPARTIDAS
+      return { tipo, calificaciones: calcularCalificaciones(respuestas, config) }
+    })
+  )
 }
 
 export type NpsPorTipo = {

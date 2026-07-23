@@ -1,10 +1,18 @@
 'use server'
 
 import { z } from 'zod'
-import { createSupabaseAdmin } from '@/lib/supabase/server'
+import { createSupabaseAdmin, createSupabaseServer } from '@/lib/supabase/server'
 import { parseClientesCSV } from '@/lib/utils/csv'
 import { revalidatePath } from 'next/cache'
 import { redirect } from 'next/navigation'
+
+async function getRoleOrThrow() {
+  const supabase = await createSupabaseServer()
+  const { data: { user } } = await supabase.auth.getUser()
+  if (!user) throw new Error('No autorizado')
+  const role = user.app_metadata?.role as string | undefined
+  if (role && role !== 'admin') throw new Error('No autorizado')
+}
 
 const CampanaSchema = z.object({
   nombre:           z.string().min(1, 'El nombre es requerido').max(200),
@@ -19,6 +27,10 @@ const CambiarEstadoSchema = z.object({
 
 const EliminarCampanaSchema = z.object({
   id: z.string().uuid('Campaña inválida.'),
+})
+
+const EliminarEncuestaSchema = z.object({
+  encuesta_id: z.string().uuid('Encuesta inválida.'),
 })
 
 type ActionState = { error?: string }
@@ -225,4 +237,62 @@ export async function eliminarCampanaAction(
   revalidatePath('/clientes')
   revalidatePath('/respuestas')
   redirect('/campanas')
+}
+
+export async function eliminarEncuestaAction(
+  _prevState: ActionState,
+  formData: FormData
+): Promise<ActionState> {
+  try {
+    await getRoleOrThrow()
+  } catch {
+    return { error: 'No tenés permisos para eliminar encuestas.' }
+  }
+
+  const parsed = EliminarEncuestaSchema.safeParse({
+    encuesta_id: formData.get('encuesta_id'),
+  })
+  if (!parsed.success) return { error: parsed.error.issues[0]?.message ?? 'Encuesta inválida.' }
+
+  const supabase = createSupabaseAdmin()
+  const encuestaId = parsed.data.encuesta_id
+
+  const { data: encuesta, error: encuestaError } = await supabase
+    .from('encuestas')
+    .select('id, cliente_id, campana_id')
+    .eq('id', encuestaId)
+    .single()
+
+  if (encuestaError || !encuesta) return { error: 'La encuesta no existe.' }
+
+  const { error: waDetalleError } = await supabase
+    .from('envios_whatsapp_detalle')
+    .delete()
+    .eq('encuesta_id', encuestaId)
+  if (waDetalleError) return { error: 'No se pudieron eliminar los envíos de WhatsApp asociados.' }
+
+  const { error: respuestaError } = await supabase
+    .from('respuestas')
+    .delete()
+    .eq('encuesta_id', encuestaId)
+  if (respuestaError) return { error: 'No se pudo eliminar la respuesta asociada.' }
+
+  const { error: enviosError } = await supabase
+    .from('envios')
+    .delete()
+    .eq('cliente_id', encuesta.cliente_id)
+    .eq('campana_id', encuesta.campana_id)
+  if (enviosError) return { error: 'No se pudieron eliminar los envíos asociados.' }
+
+  const { error: encuestaDeleteError } = await supabase
+    .from('encuestas')
+    .delete()
+    .eq('id', encuestaId)
+  if (encuestaDeleteError) return { error: 'No se pudo eliminar la encuesta.' }
+
+  revalidatePath(`/campanas/${encuesta.campana_id}`)
+  revalidatePath('/campanas')
+  revalidatePath('/respuestas')
+  revalidatePath('/nps')
+  return {}
 }

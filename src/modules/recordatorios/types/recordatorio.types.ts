@@ -31,6 +31,14 @@ export type PuedeCrearRecordatorioResult = {
   reason?: string
 }
 
+export type EncuestaMedida = {
+  id: string
+  comentario: string
+  createdAt: string
+  createdBy: string | null
+  updatedAt: string
+}
+
 export type EncuestaNecesidadLlamado = {
   id: string
   token: string
@@ -49,6 +57,7 @@ export type EncuestaNecesidadLlamado = {
     concesionario: string
     orden_fabricacion: string | null
   } | null
+  medidas: EncuestaMedida[]
 }
 
 export type EncuestaSinRespuesta = {
@@ -71,4 +80,5 @@ export type EncuestaSinRespuesta = {
     concesionario: string
     orden_fabricacion: string | null
   } | null
+  medidas: EncuestaMedida[]
 }

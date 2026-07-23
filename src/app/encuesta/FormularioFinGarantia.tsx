@@ -182,7 +182,6 @@ export default function FormularioFinGarantia({ token, concesionario }: Formular
             </svg>
           </div>
           <h2 className="text-sm font-semibold text-gray-900">Información de contacto</h2>
-          <span className="text-xs text-gray-400 ml-auto">Para el envío de presente</span>
         </div>
         <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
           <CampoTexto label="Nombre y apellido" name="nombre_apellido" required disabled={isPending} />

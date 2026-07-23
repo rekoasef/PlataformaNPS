@@ -6,14 +6,15 @@ import NpsInsightsPanel from '@/modules/dashboard/components/NpsInsightsPanel'
 import ComparativoCanalPanel from '@/modules/dashboard/components/ComparativoCanalPanel'
 import CalificacionesPanel from '@/modules/dashboard/components/CalificacionesPanel'
 import NpsPorTipoPanel from '@/modules/dashboard/components/NpsPorTipoPanel'
+import TipoEncuestaBadge from '@/modules/dashboard/components/TipoEncuestaBadge'
 import {
   getDashboardFilterOptions,
   getEfectividadEnvios,
-  getNpsDistribucion,
-  getNpsPorConcesionario,
+  getNpsDistribucionPorTipoEncuesta,
+  getNpsPorConcesionarioPorTipoEncuesta,
   getNpsResumenExtendido,
   getComparativoPorCanal,
-  getCalificacionesResumen,
+  getCalificacionesPorTipoEncuesta,
   getNpsPorTipoEncuesta,
 } from '@/modules/dashboard/services/dashboard.service'
 import { formatTecnologia, normalizeTecnologiaInput } from '@/lib/utils/tecnologia'
@@ -43,14 +44,14 @@ export default async function NpsPage({
   const comparacionFiltros = { fechaDesde, fechaHasta, tipoMaquina: tipoMaquinaFilter, tecnologia: tecnologiaFilter, tipoEncuestaId }
   const tecnologiaLabel = tecnologiaFilter ? formatTecnologia(tecnologiaFilter) : undefined
 
-  const [options, resumen, efectividad, rows, distribucion, comparativoCanal, calificaciones, npsPorTipo] = await Promise.all([
+  const [options, resumen, efectividad, npsPorConcesionario, distribucionPorTipo, comparativoCanal, calificaciones, npsPorTipo] = await Promise.all([
     getDashboardFilterOptions(),
     getNpsResumenExtendido(filtros),
     getEfectividadEnvios(filtros),
-    getNpsPorConcesionario(comparacionFiltros),
-    getNpsDistribucion(filtros),
+    getNpsPorConcesionarioPorTipoEncuesta(comparacionFiltros),
+    getNpsDistribucionPorTipoEncuesta(filtros),
     getComparativoPorCanal(filtros),
-    getCalificacionesResumen(filtros),
+    getCalificacionesPorTipoEncuesta(filtros),
     tipoEncuestaId ? Promise.resolve([]) : getNpsPorTipoEncuesta({ concesionario, fechaDesde, fechaHasta, tipoMaquina: tipoMaquinaFilter, tecnologia: tecnologiaFilter }),
   ])
 
@@ -193,20 +194,27 @@ export default async function NpsPage({
           )
         })()}
 
-        <CalificacionesPanel calificaciones={calificaciones} />
+        <CalificacionesPanel data={calificaciones} />
 
         <ComparativoCanalPanel comparativo={comparativoCanal} />
 
-        <NpsInsightsPanel rows={rows} distribucion={distribucion} />
+        <NpsInsightsPanel npsPorConcesionario={npsPorConcesionario} distribucionPorTipo={distribucionPorTipo} />
 
-        <Card>
-          <CardHeader>
-            <h2 className="text-sm font-semibold text-foreground">Ranking completo por concesionario</h2>
-          </CardHeader>
-          <CardContent className="p-0">
-            <ConcesionariosNpsTable rows={rows} />
-          </CardContent>
-        </Card>
+        <div className="space-y-3">
+          <h2 className="text-sm font-semibold text-foreground">Ranking completo por concesionario</h2>
+          <div className={`grid grid-cols-1 gap-4 ${npsPorConcesionario.length > 1 ? 'xl:grid-cols-2' : ''}`}>
+            {npsPorConcesionario.map(({ tipo, rows }) => (
+              <Card key={tipo.id}>
+                <CardHeader>
+                  <TipoEncuestaBadge tipo={tipo} />
+                </CardHeader>
+                <CardContent className="p-0">
+                  <ConcesionariosNpsTable rows={rows} />
+                </CardContent>
+              </Card>
+            ))}
+          </div>
+        </div>
       </div>
     </PageContainer>
   )

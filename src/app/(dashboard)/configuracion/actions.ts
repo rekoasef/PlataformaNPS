@@ -2,10 +2,24 @@
 
 import { z } from 'zod'
 import { revalidatePath } from 'next/cache'
+import { createSupabaseServer } from '@/lib/supabase/server'
 import { sendEmail } from '@/lib/email/send-email'
 import { buildTestEmailTemplate } from '@/lib/email/templates/test-email'
 import { buildRamblaRegaloTemplate } from '@/lib/email/templates/rambla-regalo'
-import { getSystemConfig, updateSystemConfig } from '@/modules/configuracion/services/configuracion.service'
+import {
+  getSystemConfig,
+  updateSystemConfig,
+  updateEnviaRegalo,
+} from '@/modules/configuracion/services/configuracion.service'
+
+async function requireAdmin() {
+  const supabase = await createSupabaseServer()
+  const { data: { user } } = await supabase.auth.getUser()
+  const role = user?.app_metadata?.role as string | undefined
+  if (!user || role !== 'admin') {
+    throw new Error('Solo los administradores pueden modificar esta configuración.')
+  }
+}
 
 const ConfigSchema = z.object({
   id: z.string().uuid('Configuración inválida.'),
@@ -166,4 +180,37 @@ export async function enviarEmailPruebaRamblaAction(
   }
 
   return { success: true, sentTo: recipient }
+}
+
+const EnviaRegaloSchema = z.object({
+  tipoEncuestaId: z.string().uuid(),
+  enviaRegalo: z.enum(['true', 'false']),
+})
+
+export async function actualizarEnviaRegaloAction(
+  _prevState: ActionState,
+  formData: FormData
+): Promise<ActionState> {
+  try {
+    await requireAdmin()
+  } catch (e) {
+    return { error: (e as Error).message }
+  }
+
+  const result = EnviaRegaloSchema.safeParse({
+    tipoEncuestaId: formData.get('tipoEncuestaId'),
+    enviaRegalo: formData.get('enviaRegalo'),
+  })
+  if (!result.success) {
+    return { error: 'Datos inválidos.' }
+  }
+
+  try {
+    await updateEnviaRegalo(result.data.tipoEncuestaId, result.data.enviaRegalo === 'true')
+  } catch {
+    return { error: 'No se pudo actualizar la configuración.' }
+  }
+
+  revalidatePath('/configuracion')
+  return { success: true }
 }

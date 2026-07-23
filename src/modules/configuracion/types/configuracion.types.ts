@@ -6,3 +6,5 @@ export type SystemConfigUpdate = Pick<
   TablesUpdate<'system_config'>,
   'dias_notificacion_inicial' | 'dias_notificacion_recordatorio' | 'dias_hasta_llamado' | 'emails_notificacion' | 'emails_rambla'
 >
+
+export type TipoEncuesta = Tables<'tipos_encuesta'>

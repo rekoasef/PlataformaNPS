@@ -1,10 +1,8 @@
-import Link from 'next/link'
 import PageContainer from '@/components/layout/PageContainer'
-import Badge from '@/components/ui/Badge'
 import Pagination from '@/components/ui/Pagination'
 import { Card, CardContent, CardHeader } from '@/components/ui/Card'
-import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/Table'
-import MarcarSinRespuestaForm from '@/modules/recordatorios/components/MarcarSinRespuestaForm'
+import { Table, TableBody, TableHead, TableHeader, TableRow } from '@/components/ui/Table'
+import LlamadoRow from '@/modules/recordatorios/components/LlamadoRow'
 import { getEncuestasNecesidadLlamado, LLAMADOS_PAGE_SIZE } from '@/modules/recordatorios/services/recordatorios.service'
 
 export default async function LlamadosPage({
@@ -45,34 +43,13 @@ export default async function LlamadosPage({
                     <TableHead>Teléfono 2</TableHead>
                     <TableHead>Teléfono 3</TableHead>
                     <TableHead>Estado</TableHead>
+                    <TableHead>Medidas</TableHead>
                     <TableHead>Acciones</TableHead>
                   </TableRow>
                 </TableHeader>
                 <TableBody>
                   {encuestas.map((encuesta) => (
-                    <TableRow key={encuesta.id}>
-                      <TableCell>{encuesta.campana?.nombre ?? '—'}</TableCell>
-                      <TableCell className="font-medium">{encuesta.cliente?.nombre ?? '—'}</TableCell>
-                      <TableCell>{encuesta.cliente?.orden_fabricacion ?? '—'}</TableCell>
-                      <TableCell>{encuesta.cliente?.concesionario ?? '—'}</TableCell>
-                      <TableCell>{encuesta.cliente?.telefono ?? '—'}</TableCell>
-                      <TableCell>{encuesta.cliente?.telefono_2 ?? '—'}</TableCell>
-                      <TableCell>{encuesta.cliente?.telefono_3 ?? '—'}</TableCell>
-                      <TableCell>
-                        <Badge variant="warning">necesidad_de_llamado</Badge>
-                      </TableCell>
-                      <TableCell>
-                        <div className="flex flex-col items-start gap-2">
-                          <Link
-                            href={`/encuesta?token=${encuesta.token}`}
-                            className="text-sm font-medium text-brand hover:underline"
-                          >
-                            Abrir encuesta
-                          </Link>
-                          <MarcarSinRespuestaForm encuestaId={encuesta.id} />
-                        </div>
-                      </TableCell>
-                    </TableRow>
+                    <LlamadoRow key={encuesta.id} encuesta={encuesta} />
                   ))}
                 </TableBody>
               </Table>
