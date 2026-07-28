@@ -4,6 +4,7 @@ import { useState } from 'react'
 import Badge from '@/components/ui/Badge'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/Table'
 import type { RespuestaDetalle } from '../services/dashboard.service'
+import { getCalificacionesConfigPorSlug } from '../utils/calificaciones'
 import { getNpsAnswerVariant } from '../utils/nps'
 import { formatTecnologia } from '@/lib/utils/tecnologia'
 
@@ -160,12 +161,14 @@ export default function RespuestasTable({ respuestas }: RespuestasTableProps) {
                         <div className="space-y-3">
                           <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Calificaciones</p>
                           <div className="space-y-2">
-                            <ScoreLine label="Entrega y presentación" value={respuesta.calificacionEntregaPresentacion} />
-                            <ScoreLine label="Capacitación" value={respuesta.calificacionCapacitacion} />
-                            <ScoreLine label="Técnico" value={respuesta.calificacionTecnico} />
-                            <ScoreLine label="NPS concesionario" value={respuesta.npsConcesionario} nps />
-                            <ScoreLine label="NPS producto" value={respuesta.npsProducto} nps />
-                            <ScoreLine label="NPS empresa" value={respuesta.npsEmpresa} nps />
+                            {getCalificacionesConfigPorSlug(respuesta.tipoEncuestaSlug).map((item) => (
+                              <ScoreLine
+                                key={item.key}
+                                label={item.label}
+                                value={respuesta[item.key] as number | null}
+                                nps={item.key.startsWith('nps')}
+                              />
+                            ))}
                           </div>
                         </div>
                         <div className="space-y-3">
@@ -179,6 +182,18 @@ export default function RespuestasTable({ respuestas }: RespuestasTableProps) {
                               <p className="font-medium text-foreground">Empresa</p>
                               <p>{respuesta.comentarioEmpresa || 'Sin comentario.'}</p>
                             </div>
+                            {respuesta.tipoEncuestaSlug === 'fin_garantia' && (
+                              <div>
+                                <p className="font-medium text-foreground">Problemas técnicos</p>
+                                <p>
+                                  {respuesta.tuvoProblemasTecnicos === null
+                                    ? '—'
+                                    : respuesta.tuvoProblemasTecnicos
+                                      ? `Sí — ${respuesta.comentarioProblemas || 'sin comentario adicional'}`
+                                      : 'No'}
+                                </p>
+                              </div>
+                            )}
                             <div>
                               <p className="font-medium text-foreground">General</p>
                               <p>{respuesta.comentarioGeneral || 'Sin comentario.'}</p>
