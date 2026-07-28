@@ -3,6 +3,7 @@ import Badge from '@/components/ui/Badge'
 import { Card, CardContent, CardHeader } from '@/components/ui/Card'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/Table'
 import { formatFechaHora } from '@/lib/utils/fecha'
+import RevertirNecesidadLlamadoForm from '@/modules/recordatorios/components/RevertirNecesidadLlamadoForm'
 import { getEncuestasSinRespuesta } from '@/modules/recordatorios/services/recordatorios.service'
 
 export default async function SinRespuestaPage() {
@@ -35,6 +36,7 @@ export default async function SinRespuestaPage() {
                   <TableHead>Historial de medidas</TableHead>
                   <TableHead>Observación final</TableHead>
                   <TableHead>Estado</TableHead>
+                  <TableHead>Acciones</TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
@@ -70,6 +72,9 @@ export default async function SinRespuestaPage() {
                     </TableCell>
                     <TableCell>
                       <Badge variant="danger">sin_respuesta</Badge>
+                    </TableCell>
+                    <TableCell>
+                      <RevertirNecesidadLlamadoForm encuestaId={encuesta.id} />
                     </TableCell>
                   </TableRow>
                 ))}

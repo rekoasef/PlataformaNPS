@@ -11,7 +11,12 @@ import MarcarSinRespuestaForm from './MarcarSinRespuestaForm'
 import MedidaItem from './MedidaItem'
 import type { EncuestaNecesidadLlamado } from '../types/recordatorio.types'
 
-const COLUMN_COUNT = 10
+const COLUMN_COUNT = 11
+
+const tipoBadge: Record<string, 'info' | 'warning'> = {
+  inicio_garantia: 'info',
+  fin_garantia:    'warning',
+}
 
 interface LlamadoRowProps {
   encuesta: EncuestaNecesidadLlamado
@@ -32,6 +37,15 @@ export default function LlamadoRow({ encuesta }: LlamadoRowProps) {
     <>
       <TableRow>
         <TableCell>{encuesta.campana?.nombre ?? '—'}</TableCell>
+        <TableCell>
+          {encuesta.campana?.tipoSlug && encuesta.campana?.tipoNombre ? (
+            <Badge variant={tipoBadge[encuesta.campana.tipoSlug] ?? 'default'}>
+              {encuesta.campana.tipoNombre}
+            </Badge>
+          ) : (
+            <span className="text-xs text-muted-foreground">—</span>
+          )}
+        </TableCell>
         <TableCell className="font-medium">{encuesta.cliente?.nombre ?? '—'}</TableCell>
         <TableCell>{encuesta.cliente?.orden_fabricacion ?? '—'}</TableCell>
         <TableCell>{encuesta.cliente?.concesionario ?? '—'}</TableCell>

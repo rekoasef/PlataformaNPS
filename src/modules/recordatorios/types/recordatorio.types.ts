@@ -47,6 +47,8 @@ export type EncuestaNecesidadLlamado = {
     id: string
     nombre: string
     fecha: string
+    tipoNombre: string | null
+    tipoSlug: string | null
   } | null
   cliente: {
     id: string

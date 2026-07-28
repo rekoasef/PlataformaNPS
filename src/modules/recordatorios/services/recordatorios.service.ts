@@ -196,24 +196,31 @@ export async function marcarRecordatorioEnviado(
 export const LLAMADOS_PAGE_SIZE = 25
 
 export async function getEncuestasNecesidadLlamado(
-  page = 1
+  page = 1,
+  tipoEncuestaId?: string
 ): Promise<{ data: EncuestaNecesidadLlamado[]; total: number }> {
   await syncWorkflowEstados()
   const supabase = await createSupabaseServer()
   const from = (page - 1) * LLAMADOS_PAGE_SIZE
   const to = from + LLAMADOS_PAGE_SIZE - 1
 
-  const { data, error, count } = await supabase
+  let query = supabase
     .from('encuestas')
     .select(`
       id,
       token,
       estado,
-      campanas(id, nombre, fecha),
+      campanas!inner(id, nombre, fecha, tipo_encuesta_id, tipos_encuesta(id, nombre, slug)),
       clientes(id, nombre, telefono, telefono_2, telefono_3, concesionario, orden_fabricacion),
       encuesta_medidas(id, comentario, created_at, created_by, updated_at)
     `, { count: 'exact' })
     .eq('estado', 'necesidad_de_llamado')
+
+  if (tipoEncuestaId) {
+    query = query.eq('campanas.tipo_encuesta_id', tipoEncuestaId)
+  }
+
+  const { data, error, count } = await query
     .order('created_at', { ascending: true })
     .order('created_at', { ascending: true, referencedTable: 'encuesta_medidas' })
     .range(from, to)
@@ -221,14 +228,31 @@ export async function getEncuestasNecesidadLlamado(
   if (error) throw error
 
   return {
-    data: (data ?? []).map((item) => ({
-      id: item.id,
-      token: item.token,
-      estado: 'necesidad_de_llamado',
-      campana: Array.isArray(item.campanas) ? item.campanas[0] ?? null : item.campanas,
-      cliente: Array.isArray(item.clientes) ? item.clientes[0] ?? null : item.clientes,
-      medidas: mapMedidas(item.encuesta_medidas),
-    })),
+    data: (data ?? []).map((item) => {
+      const campana = Array.isArray(item.campanas) ? item.campanas[0] ?? null : item.campanas
+      const tipo = campana
+        ? Array.isArray(campana.tipos_encuesta)
+          ? campana.tipos_encuesta[0] ?? null
+          : campana.tipos_encuesta
+        : null
+
+      return {
+        id: item.id,
+        token: item.token,
+        estado: 'necesidad_de_llamado' as const,
+        campana: campana
+          ? {
+              id: campana.id,
+              nombre: campana.nombre,
+              fecha: campana.fecha,
+              tipoNombre: tipo?.nombre ?? null,
+              tipoSlug: tipo?.slug ?? null,
+            }
+          : null,
+        cliente: Array.isArray(item.clientes) ? item.clientes[0] ?? null : item.clientes,
+        medidas: mapMedidas(item.encuesta_medidas),
+      }
+    }),
     total: count ?? 0,
   }
 }
@@ -313,6 +337,37 @@ export async function marcarEncuestaSinRespuesta(
     .eq('estado', 'necesidad_de_llamado')
 
   if (error) throw error
+}
+
+export async function revertirEncuestaANecesidadLlamado(
+  encuestaId: string,
+  comentario: string,
+  revertidoPor: string | null
+) {
+  const supabase = await createSupabaseServer()
+
+  const { error, data } = await supabase
+    .from('encuestas')
+    .update({
+      estado: 'necesidad_de_llamado',
+      comentario_sin_respuesta: null,
+      marcado_sin_respuesta_at: null,
+      marcado_sin_respuesta_por: null,
+    })
+    .eq('id', encuestaId)
+    .eq('estado', 'sin_respuesta')
+    .select('id')
+
+  if (error) throw error
+  if (!data || data.length === 0) {
+    throw new Error('La OF ya no está marcada como sin respuesta.')
+  }
+
+  const { error: medidaError } = await supabase
+    .from('encuesta_medidas')
+    .insert({ encuesta_id: encuestaId, comentario, created_by: revertidoPor })
+
+  if (medidaError) throw medidaError
 }
 
 function getNombreRecordatorio(numeroRecordatorio: number) {

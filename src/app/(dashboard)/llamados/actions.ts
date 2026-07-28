@@ -8,6 +8,7 @@ import {
   agregarMedidaLlamado,
   eliminarMedidaLlamado,
   marcarEncuestaSinRespuesta,
+  revertirEncuestaANecesidadLlamado,
 } from '@/modules/recordatorios/services/recordatorios.service'
 
 type ActionState = { error?: string; success?: boolean }
@@ -41,6 +42,15 @@ const EditarMedidaSchema = z.object({
 
 const EliminarMedidaSchema = z.object({
   medidaId: z.string().uuid('Medida inválida.'),
+})
+
+const RevertirSchema = z.object({
+  encuestaId: z.string().uuid('Encuesta inválida.'),
+  comentario: z
+    .string()
+    .trim()
+    .min(3, 'Indicá brevemente el motivo (mínimo 3 caracteres).')
+    .max(2000, 'El comentario es demasiado largo.'),
 })
 
 export async function agregarMedidaAction(
@@ -138,6 +148,41 @@ export async function marcarSinRespuestaAction(
     await marcarEncuestaSinRespuesta(parsed.data.encuestaId, parsed.data.comentario, marcadoPor)
   } catch {
     return { error: 'No se pudo marcar la OF como sin respuesta.' }
+  }
+
+  revalidatePath('/llamados')
+  revalidatePath('/sin-respuesta')
+  revalidatePath('/campanas')
+  return { success: true }
+}
+
+export async function revertirNecesidadLlamadoAction(
+  _prevState: ActionState,
+  formData: FormData
+): Promise<ActionState> {
+  const parsed = RevertirSchema.safeParse({
+    encuestaId: formData.get('encuestaId'),
+    comentario: formData.get('comentario'),
+  })
+
+  if (!parsed.success) {
+    return { error: parsed.error.issues[0]?.message ?? 'Datos inválidos.' }
+  }
+
+  const supabase = await createSupabaseServer()
+  const { data: userData } = await supabase.auth.getUser()
+  const revertidoPor = userData.user?.id ?? null
+
+  try {
+    await revertirEncuestaANecesidadLlamado(
+      parsed.data.encuestaId,
+      parsed.data.comentario,
+      revertidoPor
+    )
+  } catch (err) {
+    return {
+      error: err instanceof Error ? err.message : 'No se pudo revertir el estado de la OF.',
+    }
   }
 
   revalidatePath('/llamados')
