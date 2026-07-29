@@ -4,6 +4,13 @@ set -e
 IMAGE_NAME="crucianelli/npsplatform"
 TAG="latest"
 
+CURRENT_BRANCH=$(git branch --show-current)
+if [ "$CURRENT_BRANCH" != "main" ]; then
+  echo "Error: estás en la rama '$CURRENT_BRANCH', no en 'main'."
+  echo "Este script pushea a '$IMAGE_NAME:$TAG', que Watchtower despliega directo a producción."
+  echo "Cambiá a 'main' antes de correr deploy.sh, o usá el script de staging."
+  exit 1
+fi
 
 if [ ! -f .env.local ]; then
   echo "Error: no se encontró .env.local"
