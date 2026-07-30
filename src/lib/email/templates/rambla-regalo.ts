@@ -1,5 +1,5 @@
 const PRODUCTOS_REGALO = [
-  { nombre: 'Set de asado', sku: 'SCE0014', cantidad: 1 },
+  { nombre: 'Mini Ball', sku: 'TCC0233', cantidad: 1 },
   { nombre: 'Botella Contigo Matterhorn', sku: 'SCE0008', cantidad: 1 },
 ] as const
 
