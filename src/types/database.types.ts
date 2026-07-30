@@ -85,6 +85,7 @@ export type Database = {
           telefono: string
           telefono_2: string | null
           telefono_3: string | null
+          tipo_maquina: string | null
         }
         Insert: {
           concesionario: string
@@ -96,6 +97,7 @@ export type Database = {
           telefono: string
           telefono_2?: string | null
           telefono_3?: string | null
+          tipo_maquina?: string | null
         }
         Update: {
           concesionario?: string
@@ -107,6 +109,7 @@ export type Database = {
           telefono?: string
           telefono_2?: string | null
           telefono_3?: string | null
+          tipo_maquina?: string | null
         }
         Relationships: []
       }
