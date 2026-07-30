@@ -1,5 +1,6 @@
 import type { Tables, TablesInsert } from '@/types/database.types'
 import type { Tecnologia } from '@/lib/utils/tecnologia'
+import type { TipoMaquina } from '@/lib/utils/tipoMaquina'
 
 export type Cliente = Tables<'clientes'>
 export type ClienteInsert = TablesInsert<'clientes'>
@@ -12,4 +13,5 @@ export type ClienteFormData = {
   concesionario: string
   orden_fabricacion: string
   tecnologia?: Tecnologia | null
+  tipo_maquina?: TipoMaquina | null
 }

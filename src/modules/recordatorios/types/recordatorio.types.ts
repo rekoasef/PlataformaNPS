@@ -58,6 +58,7 @@ export type EncuestaNecesidadLlamado = {
     telefono_3: string | null
     concesionario: string
     orden_fabricacion: string | null
+    tipo_maquina: string | null
   } | null
   medidas: EncuestaMedida[]
 }

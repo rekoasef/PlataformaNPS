@@ -1,9 +1,10 @@
 // Parser compartido — sin imports de Node.js, funciona en browser y servidor.
 // Columnas soportadas (en cualquier orden, con o sin acentos/mayúsculas):
 //   CONCESIONARIO | CLIENTE (según factura) | ORDEN DE FABRICACION … | Teléfono 1/2/3
-//   concesionario | nombre                  | orden_fabricacion       | telefono[_1|_2|_3] | tecnologia
+//   concesionario | nombre                  | orden_fabricacion       | telefono[_1|_2|_3] | tecnologia | tipo_maquina
 
 import { normalizeTecnologiaInput, type Tecnologia } from '@/lib/utils/tecnologia'
+import { normalizeTipoMaquinaInput, type TipoMaquina } from '@/lib/utils/tipoMaquina'
 
 export type ClienteCSVRow = {
   nombre: string
@@ -13,6 +14,7 @@ export type ClienteCSVRow = {
   concesionario: string
   orden_fabricacion: string
   tecnologia: Tecnologia | null
+  tipo_maquina: TipoMaquina | null
 }
 
 function parseCSVLine(line: string, sep: string): string[] {
@@ -103,6 +105,7 @@ export function parseClientesCSV(text: string): ClienteCSVRow[] {
   const phone2Idx = headers.findIndex((h) => isPhoneHeader(h, 2))
   const phone3Idx = headers.findIndex((h) => isPhoneHeader(h, 3))
   const tecnologiaIdx = headers.findIndex((h) => h === 'tecnologia')
+  const tipoMaquinaIdx = headers.findIndex((h) => h === 'tipo maquina')
 
   if (nameIdx === -1)   throw new Error('No se encontro la columna de cliente/nombre.')
   if (dealerIdx === -1) throw new Error('No se encontro la columna de concesionario.')
@@ -128,12 +131,20 @@ export function parseClientesCSV(text: string): ClienteCSVRow[] {
         throw new Error(`La tecnología de la fila ${index + 2} debe ser Leaf o Precision Planting.`)
       }
 
+      const tipoMaquinaRaw = tipoMaquinaIdx === -1 ? '' : values[tipoMaquinaIdx] ?? ''
+      const tipoMaquina = normalizeTipoMaquinaInput(tipoMaquinaRaw)
+
+      if (tipoMaquinaIdx !== -1 && tipoMaquinaRaw.trim() && !tipoMaquina) {
+        throw new Error(`El tipo de máquina de la fila ${index + 2} debe ser Sembradora o Fertilizadora.`)
+      }
+
       return {
         nombre: values[nameIdx] ?? '',
         concesionario: values[dealerIdx] ?? '',
         orden_fabricacion: values[ordenIdx] ?? '',
         phones,
         tecnologia,
+        tipoMaquina,
       }
     })
     .filter((row) => row.nombre && row.concesionario && row.orden_fabricacion && row.phones.length > 0)
@@ -154,6 +165,7 @@ export function parseClientesCSV(text: string): ClienteCSVRow[] {
         concesionario: row.concesionario.trim(),
         orden_fabricacion: key,
         tecnologia: row.tecnologia,
+        tipo_maquina: row.tipoMaquina,
       })
       continue
     }
@@ -181,6 +193,11 @@ export function parseClientesCSV(text: string): ClienteCSVRow[] {
       throw new Error(`La OF ${key} tiene más de una tecnología asociada.`)
     }
     existing.tecnologia = existing.tecnologia ?? row.tecnologia
+
+    if (existing.tipo_maquina && row.tipoMaquina && existing.tipo_maquina !== row.tipoMaquina) {
+      throw new Error(`La OF ${key} tiene más de un tipo de máquina asociado.`)
+    }
+    existing.tipo_maquina = existing.tipo_maquina ?? row.tipoMaquina
   }
 
   return Array.from(grouped.values())

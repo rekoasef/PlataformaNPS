@@ -79,6 +79,7 @@ export default async function LlamadosPage({
                     <TableHead>Cliente</TableHead>
                     <TableHead>OF</TableHead>
                     <TableHead>Concesionario</TableHead>
+                    <TableHead>Máquina</TableHead>
                     <TableHead>Teléfono 1</TableHead>
                     <TableHead>Teléfono 2</TableHead>
                     <TableHead>Teléfono 3</TableHead>

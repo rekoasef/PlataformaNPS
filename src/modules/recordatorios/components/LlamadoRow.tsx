@@ -6,12 +6,13 @@ import Badge from '@/components/ui/Badge'
 import Button from '@/components/ui/Button'
 import { TableCell, TableRow } from '@/components/ui/Table'
 import { cn } from '@/lib/utils/cn'
+import { formatTipoMaquina } from '@/lib/utils/tipoMaquina'
 import { agregarMedidaAction } from '@/app/(dashboard)/llamados/actions'
 import MarcarSinRespuestaForm from './MarcarSinRespuestaForm'
 import MedidaItem from './MedidaItem'
 import type { EncuestaNecesidadLlamado } from '../types/recordatorio.types'
 
-const COLUMN_COUNT = 11
+const COLUMN_COUNT = 12
 
 const tipoBadge: Record<string, 'info' | 'warning'> = {
   inicio_garantia: 'info',
@@ -49,6 +50,7 @@ export default function LlamadoRow({ encuesta }: LlamadoRowProps) {
         <TableCell className="font-medium">{encuesta.cliente?.nombre ?? '—'}</TableCell>
         <TableCell>{encuesta.cliente?.orden_fabricacion ?? '—'}</TableCell>
         <TableCell>{encuesta.cliente?.concesionario ?? '—'}</TableCell>
+        <TableCell className="text-muted-foreground">{formatTipoMaquina(encuesta.cliente?.tipo_maquina)}</TableCell>
         <TableCell>{encuesta.cliente?.telefono ?? '—'}</TableCell>
         <TableCell>{encuesta.cliente?.telefono_2 ?? '—'}</TableCell>
         <TableCell>{encuesta.cliente?.telefono_3 ?? '—'}</TableCell>

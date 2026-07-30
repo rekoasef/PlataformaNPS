@@ -211,7 +211,7 @@ export async function getEncuestasNecesidadLlamado(
       token,
       estado,
       campanas!inner(id, nombre, fecha, tipo_encuesta_id, tipos_encuesta(id, nombre, slug)),
-      clientes(id, nombre, telefono, telefono_2, telefono_3, concesionario, orden_fabricacion),
+      clientes(id, nombre, telefono, telefono_2, telefono_3, concesionario, orden_fabricacion, tipo_maquina),
       encuesta_medidas(id, comentario, created_at, created_by, updated_at)
     `, { count: 'exact' })
     .eq('estado', 'necesidad_de_llamado')
