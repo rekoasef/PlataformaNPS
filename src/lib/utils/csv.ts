@@ -4,7 +4,7 @@
 //   concesionario | nombre                  | orden_fabricacion       | telefono[_1|_2|_3] | tecnologia | tipo_maquina
 
 import { normalizeTecnologiaInput, type Tecnologia } from '@/lib/utils/tecnologia'
-import { normalizeTipoMaquinaInput, type TipoMaquina } from '@/lib/utils/tipoMaquina'
+import { MAQUINAS, normalizeTipoMaquinaInput, type TipoMaquina } from '@/lib/utils/tipoMaquina'
 
 export type ClienteCSVRow = {
   nombre: string
@@ -135,7 +135,7 @@ export function parseClientesCSV(text: string): ClienteCSVRow[] {
       const tipoMaquina = normalizeTipoMaquinaInput(tipoMaquinaRaw)
 
       if (tipoMaquinaIdx !== -1 && tipoMaquinaRaw.trim() && !tipoMaquina) {
-        throw new Error(`El tipo de máquina de la fila ${index + 2} debe ser Sembradora o Fertilizadora.`)
+        throw new Error(`El tipo de máquina de la fila ${index + 2} debe ser uno de: ${MAQUINAS.join(', ')}.`)
       }
 
       return {

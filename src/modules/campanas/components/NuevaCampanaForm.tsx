@@ -8,6 +8,7 @@ import Input from '@/components/ui/Input'
 import Button from '@/components/ui/Button'
 import { Card, CardContent, CardHeader } from '@/components/ui/Card'
 import { formatTecnologia } from '@/lib/utils/tecnologia'
+import { formatTipoMaquina } from '@/lib/utils/tipoMaquina'
 import type { OFElegible } from '../services/campanas.service'
 
 const today = new Date().toISOString().split('T')[0]
@@ -256,6 +257,11 @@ export default function NuevaCampanaForm({ tipos, ofsElegibles }: Props) {
             <code className="bg-muted px-1 rounded text-xs">
               CONCESIONARIO, CLIENTE (según factura), ORDEN DE FABRICACION MÁQUINA, Teléfono del Cliente
             </code>
+            <br />
+            Opcionales:{' '}
+            <code className="bg-muted px-1 rounded text-xs">
+              tecnologia (Leaf / Precision Planting), tipo_maquina (Gringa, Pionera, Plantor, Drilor, Mixia, Domina, Corper (incorporadora), Raster (motriz), Movia (arrastre), Luxion)
+            </code>
           </p>
         </CardHeader>
         <CardContent className="space-y-4">
@@ -283,7 +289,7 @@ export default function NuevaCampanaForm({ tipos, ofsElegibles }: Props) {
                 <table className="w-full text-xs">
                   <thead className="bg-muted/30 border-b border-border">
                     <tr>
-                      {['Nombre', 'Tel. 1', 'Tel. 2', 'Tel. 3', 'Concesionario', 'OF', 'Tecnología'].map((h) => (
+                      {['Nombre', 'Tel. 1', 'Tel. 2', 'Tel. 3', 'Concesionario', 'OF', 'Tecnología', 'Máquina'].map((h) => (
                         <th key={h} className="px-3 py-2 text-left text-muted-foreground font-medium">{h}</th>
                       ))}
                     </tr>
@@ -298,6 +304,7 @@ export default function NuevaCampanaForm({ tipos, ofsElegibles }: Props) {
                         <td className="px-3 py-2 text-muted-foreground">{row.concesionario}</td>
                         <td className="px-3 py-2 text-muted-foreground">{row.orden_fabricacion}</td>
                         <td className="px-3 py-2 text-muted-foreground">{formatTecnologia(row.tecnologia)}</td>
+                        <td className="px-3 py-2 text-muted-foreground">{formatTipoMaquina(row.tipo_maquina)}</td>
                       </tr>
                     ))}
                   </tbody>

@@ -24,6 +24,7 @@ export default function ImportarClientesCSV() {
             'Teléfono del Cliente 2 (opcional)',
             'Teléfono del Cliente 3 (opcional)',
             'TECNOLOGIA / TECNOLOGÍA (Leaf o Precision Planting, opcional)',
+            'TIPO_MAQUINA (Gringa, Pionera, Plantor, Drilor, Mixia, Domina, Corper (incorporadora), Raster (motriz), Movia (arrastre) o Luxion, opcional)',
           ].map((col) => (
             <li key={col}>
               <code className="text-xs bg-muted text-foreground px-1.5 py-0.5 rounded">{col}</code>
