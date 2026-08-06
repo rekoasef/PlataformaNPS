@@ -3,7 +3,7 @@
 import { useTransition } from 'react'
 import Link from 'next/link'
 import Badge from '@/components/ui/Badge'
-import { archivarPlantillaAction, duplicarPlantillaAction } from '@/app/(dashboard)/whatsapp/actions'
+import { archivarPlantillaAction, desarchivarPlantillaAction, duplicarPlantillaAction } from '@/app/(dashboard)/whatsapp/actions'
 import type { PlantillaWhatsapp, PlantillaTipo } from '../types/whatsapp.types'
 
 interface PlantillasTableProps {
@@ -28,6 +28,10 @@ export default function PlantillasTable({ plantillas }: PlantillasTableProps) {
   const handleArchivar = (id: string) => {
     if (!confirm('¿Archivar esta plantilla?')) return
     startTransition(async () => { await archivarPlantillaAction(id) })
+  }
+
+  const handleDesarchivar = (id: string) => {
+    startTransition(async () => { await desarchivarPlantillaAction(id) })
   }
 
   const handleDuplicar = (id: string) => {
@@ -89,7 +93,7 @@ export default function PlantillasTable({ plantillas }: PlantillasTableProps) {
             >
               Duplicar
             </button>
-            {p.activa && (
+            {p.activa ? (
               <button
                 type="button"
                 onClick={() => handleArchivar(p.id)}
@@ -98,6 +102,16 @@ export default function PlantillasTable({ plantillas }: PlantillasTableProps) {
                            hover:bg-destructive/10 hover:text-destructive transition-colors disabled:opacity-50"
               >
                 Archivar
+              </button>
+            ) : (
+              <button
+                type="button"
+                onClick={() => handleDesarchivar(p.id)}
+                disabled={isPending}
+                className="rounded px-2 py-1 text-xs font-medium text-muted-foreground
+                           hover:bg-muted hover:text-foreground transition-colors disabled:opacity-50"
+              >
+                Desarchivar
               </button>
             )}
           </div>

@@ -29,6 +29,7 @@ export default async function DashboardPage() {
           efectividad={efectividad}
           efectividadPorTipo={npsPorTipo.map(({ tipo, efectividad }) => ({
             nombre: tipo.nombre,
+            slug: tipo.slug,
             efectividad,
           }))}
           label="Resumen general calculado sobre todas las respuestas registradas."

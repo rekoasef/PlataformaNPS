@@ -77,6 +77,15 @@ export async function archivarPlantilla(id: string): Promise<void> {
   if (error) throw error
 }
 
+export async function desarchivarPlantilla(id: string): Promise<void> {
+  const supabase = await createSupabaseServer()
+  const { error } = await supabase
+    .from('plantillas_whatsapp')
+    .update({ activa: true, updated_at: new Date().toISOString() })
+    .eq('id', id)
+  if (error) throw error
+}
+
 // ─── Jobs ────────────────────────────────────────────────────────────────────
 
 export async function getJobsByCampana(campanaId: string): Promise<JobConPlantilla[]> {

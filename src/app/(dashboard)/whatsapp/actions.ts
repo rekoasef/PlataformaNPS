@@ -6,6 +6,7 @@ import {
   createPlantilla,
   updatePlantilla,
   archivarPlantilla,
+  desarchivarPlantilla,
   duplicarPlantilla,
   crearJob,
   detenerJob,
@@ -99,6 +100,16 @@ export async function archivarPlantillaAction(id: string): Promise<ActionState> 
     return { success: true }
   } catch (e) {
     return { error: e instanceof Error ? e.message : 'Error al archivar plantilla' }
+  }
+}
+
+export async function desarchivarPlantillaAction(id: string): Promise<ActionState> {
+  try {
+    await desarchivarPlantilla(id)
+    revalidatePath('/whatsapp/plantillas')
+    return { success: true }
+  } catch (e) {
+    return { error: e instanceof Error ? e.message : 'Error al desarchivar plantilla' }
   }
 }
 

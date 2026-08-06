@@ -7,7 +7,12 @@ interface IndicadoresPanelProps {
   resumen: NpsResumenExtendido
   efectividad: EfectividadEnvios
   label?: string
-  efectividadPorTipo?: Array<{ nombre: string; efectividad: EfectividadEnvios }>
+  efectividadPorTipo?: Array<{ nombre: string; slug: string; efectividad: EfectividadEnvios }>
+}
+
+const SLUG_CARD_COLORS: Record<string, string> = {
+  inicio_garantia: 'bg-blue-50 border-blue-200',
+  fin_garantia: 'bg-amber-50 border-amber-200',
 }
 
 function renderNps(value: number | null) {
@@ -37,6 +42,7 @@ export default function IndicadoresPanel({ resumen, efectividad, label, efectivi
       label: npsLabel(resumen.npsSembradora),
       score: resumen.npsSembradora,
       sub: `${resumen.totalSembradora} respuestas`,
+      cardColor: undefined as string | undefined,
     },
     {
       title: 'NPS producto fertilizadoras',
@@ -44,6 +50,7 @@ export default function IndicadoresPanel({ resumen, efectividad, label, efectivi
       label: npsLabel(resumen.npsFertilizadora),
       score: resumen.npsFertilizadora,
       sub: `${resumen.totalFertilizadora} respuestas`,
+      cardColor: undefined as string | undefined,
     },
     {
       title: 'NPS Concesionario',
@@ -51,6 +58,7 @@ export default function IndicadoresPanel({ resumen, efectividad, label, efectivi
       label: npsLabel(resumen.npsConcesionario),
       score: resumen.npsConcesionario,
       sub: `${resumen.totalRespuestas} respuestas`,
+      cardColor: undefined as string | undefined,
     },
     {
       title: 'NPS Empresa (Crucianelli)',
@@ -58,24 +66,27 @@ export default function IndicadoresPanel({ resumen, efectividad, label, efectivi
       label: npsLabel(resumen.npsEmpresa),
       score: resumen.npsEmpresa,
       sub: `${resumen.totalRespuestas} respuestas`,
+      cardColor: undefined as string | undefined,
     },
   ]
 
   const efectividadCards = [
-    {
-      title: 'Efectividad encuestas',
-      value: renderPorcentaje(efectividad.porcentaje),
-      label: '',
-      score: null,
-      sub: `${efectividad.respondidas} de ${efectividad.enviadas} enviadas`,
-    },
-    ...(efectividadPorTipo ?? []).map(({ nombre, efectividad: ef }) => ({
-      title: `Efectividad · ${nombre}`,
+    ...(efectividadPorTipo ?? []).map(({ nombre, slug, efectividad: ef }) => ({
+      title: `Efectividad · Encuesta ${nombre}`,
       value: renderPorcentaje(ef.porcentaje),
       label: '',
       score: null,
       sub: `${ef.respondidas} de ${ef.enviadas} enviadas`,
+      cardColor: SLUG_CARD_COLORS[slug],
     })),
+    {
+      title: 'Efectividad total encuestas',
+      value: renderPorcentaje(efectividad.porcentaje),
+      label: '',
+      score: null,
+      sub: `${efectividad.respondidas} de ${efectividad.enviadas} enviadas`,
+      cardColor: undefined,
+    },
   ]
 
   const cards = [...npsCards, ...efectividadCards]
@@ -85,7 +96,7 @@ export default function IndicadoresPanel({ resumen, efectividad, label, efectivi
       {label && <p className="text-sm text-muted-foreground">{label}</p>}
       <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-6">
         {cards.map((card) => (
-          <Card key={card.title}>
+          <Card key={card.title} className={card.cardColor}>
             <CardContent className="pt-4">
               <div className="flex items-start justify-between gap-3">
                 <p className="text-xs uppercase tracking-wide text-muted-foreground">{card.title}</p>
