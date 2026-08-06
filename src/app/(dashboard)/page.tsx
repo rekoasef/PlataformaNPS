@@ -4,16 +4,18 @@ import { Card, CardContent, CardHeader } from '@/components/ui/Card'
 import RespuestasTable from '@/modules/dashboard/components/RespuestasTable'
 import {
   getEfectividadEnvios,
+  getNpsPorTipoEncuesta,
   getNpsResumenExtendido,
   getRespuestas,
 } from '@/modules/dashboard/services/dashboard.service'
 import { checkAvisosRecordatorio } from '@/modules/recordatorios/services/avisos.service'
 
 export default async function DashboardPage() {
-  const [resumen, efectividad, respuestas] = await Promise.all([
+  const [resumen, efectividad, respuestas, npsPorTipo] = await Promise.all([
     getNpsResumenExtendido(),
     getEfectividadEnvios(),
     getRespuestas(),
+    getNpsPorTipoEncuesta(),
     checkAvisosRecordatorio().catch((err) =>
       console.error('[dashboard] checkAvisosRecordatorio falló:', err)
     ),
@@ -25,6 +27,10 @@ export default async function DashboardPage() {
         <IndicadoresPanel
           resumen={resumen}
           efectividad={efectividad}
+          efectividadPorTipo={npsPorTipo.map(({ tipo, efectividad }) => ({
+            nombre: tipo.nombre,
+            efectividad,
+          }))}
           label="Resumen general calculado sobre todas las respuestas registradas."
         />
 

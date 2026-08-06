@@ -61,21 +61,22 @@ export default function IndicadoresPanel({ resumen, efectividad, label, efectivi
     },
   ]
 
-  const efectividadCards = efectividadPorTipo && efectividadPorTipo.length > 0
-    ? efectividadPorTipo.map(({ nombre, efectividad: ef }) => ({
-        title: `Efectividad · ${nombre}`,
-        value: renderPorcentaje(ef.porcentaje),
-        label: '',
-        score: null,
-        sub: `${ef.respondidas} de ${ef.enviadas} enviadas`,
-      }))
-    : [{
-        title: 'Efectividad encuestas',
-        value: renderPorcentaje(efectividad.porcentaje),
-        label: '',
-        score: null,
-        sub: `${efectividad.respondidas} de ${efectividad.enviadas} enviadas`,
-      }]
+  const efectividadCards = [
+    {
+      title: 'Efectividad encuestas',
+      value: renderPorcentaje(efectividad.porcentaje),
+      label: '',
+      score: null,
+      sub: `${efectividad.respondidas} de ${efectividad.enviadas} enviadas`,
+    },
+    ...(efectividadPorTipo ?? []).map(({ nombre, efectividad: ef }) => ({
+      title: `Efectividad · ${nombre}`,
+      value: renderPorcentaje(ef.porcentaje),
+      label: '',
+      score: null,
+      sub: `${ef.respondidas} de ${ef.enviadas} enviadas`,
+    })),
+  ]
 
   const cards = [...npsCards, ...efectividadCards]
 
