@@ -91,12 +91,12 @@ Patrón seguido en cada módulo: el `service.ts` cambia de motor por dentro (Sup
 - [x] `clientes` — `getClientes`, `getClienteById`, `createCliente`, `getClientesByCampana`. También se migró el insert de importación CSV que vivía suelto en `actions.ts` (ahora `createClientesBulk` en el service).
 - [x] `notificaciones` — `getNotificaciones`, `getUnreadCount`, `marcarTodasLeidas`. La autenticación de `marcarTodasLeidasAction` (`supabase.auth.getUser()`) queda en Supabase Auth por ahora — es una fase aparte, todavía sin decidir/migrar.
 - [x] `campanas` — service.ts completo, más `campanas/actions.ts` (que tenía lógica de negocio pesada viviendo fuera del service: alta completa de campaña y baja en cascada). Esta última parte ahora usa `db.transaction()` de Drizzle — mejora real sobre el comportamiento anterior con Supabase, que no podía agrupar los pasos en una transacción real y "deshacía a mano" si algo fallaba a mitad de camino (podía dejar filas huérfanas). Verificado con un caso de fallo forzado a mitad de transacción: revierte todo.
-- [ ] `recordatorios` (`avisos.service.ts`, `recordatorios.service.ts`, `workflow.service.ts`)
-- [ ] `alertas`
+- [x] `recordatorios` (`avisos.service.ts`, `recordatorios.service.ts`, `workflow.service.ts`) — relación encuesta→medidas (uno-a-muchos) resuelta con dos queries + merge en JS. `marcarRecordatorioEnviado` y `revertirEncuestaANecesidadLlamado` en transacción.
+- [x] `alertas` — enviarAlertaNpsCritico, enviarNotificacionRambla. De paso se migró el logging de email_errores en `src/lib/email/send-email.ts` (lib compartida fuera de cualquier módulo).
 - [ ] `configuracion` (ojo: `usuarios.service.ts` probablemente depende de Supabase Auth admin API — no migrable hasta decidir el reemplazo de Auth)
-- [ ] `plantillas`
-- [ ] `rambla`
-- [ ] `whatsapp`
+- [x] `plantillas`
+- [x] `rambla` — consulta la vista `v_respuestas_rambla` (Drizzle la trata como una tabla de solo lectura). De paso se migró actualizarRegaloEstadoAction/guardarSeguimientoAction en rambla/actions.ts.
+- [x] `whatsapp` — plantillas + jobs. `crearJob` en transacción (job + detalle por contacto). Bug propio encontrado y corregido: `.where()` encadenado dos veces no combina condiciones en Drizzle (pisa la anterior) — ver gotcha abajo.
 - [ ] `dashboard` (738 líneas, el más grande — muchas agregaciones/conteos, prestar atención al gotcha de `count(*)` de abajo)
 
 **Puntos sueltos de Supabase fuera de `modules/*/services/`** que van a necesitar migrarse en algún momento (no son parte de ningún módulo, viven en rutas de la app): `src/app/encuesta/actions.ts` y `src/app/encuesta/actions-fin-garantia.ts` (el formulario público de encuesta, inserta en `notificaciones` directo) y `src/modules/recordatorios/services/avisos.service.ts` (también inserta en `notificaciones` sin pasar por el service de ese módulo).
@@ -106,6 +106,12 @@ Patrón seguido en cada módulo: el `service.ts` cambia de motor por dentro (Sup
 `sql<number>\`count(*)\`` compila bien pero en runtime el valor es un **string** (`"93"`, no `93`) — Postgres devuelve `count(*)` como `bigint`, y el driver lo entrega como string en JS para no perder precisión con números grandes. `sql<number>` es solo una anotación de tipo para TypeScript, no convierte el valor real. Se detectó con un test que comparaba `=== 0` y fallaba silenciosamente.
 
 **Solución:** castear a entero en el propio SQL, `sql<number>\`count(*)::int\``, no en JS después — con `::int` el driver sí devuelve un `number` real. Aplica a cualquier agregado (`count`, `sum`, etc.) que dependa de `bigint` en Postgres. Especialmente relevante para cuando se migre `dashboard.service.ts`.
+
+### Gotcha: `.where()` encadenado dos veces no combina condiciones
+
+Detectado migrando `whatsapp`: escribir `.where(cond1).where(cond2)` (el estilo fluido al que acostumbra Supabase, donde sí se combinan) en Drizzle hace que el segundo `.where()` **reemplace** al primero, no lo combine con AND — sin error, sin warning, solo un filtro incompleto que trae de más. Se revisó el resto de los módulos ya migrados y era un caso aislado.
+
+**Solución:** combinar todo en un único `.where(and(cond1, cond2, ...))`.
 
 ## 8. Migración de datos reales a staging (2026-08-18)
 
