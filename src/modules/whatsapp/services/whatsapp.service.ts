@@ -1,4 +1,6 @@
-import { createSupabaseServer } from '@/lib/supabase/server'
+import { db } from '@/lib/db/client'
+import { campanas, clientes, encuestas, enviosWhatsappDetalle, enviosWhatsappJobs, plantillasWhatsapp } from '@/lib/db/schema'
+import { and, asc, desc, eq, inArray } from 'drizzle-orm'
 import type {
   PlantillaWhatsapp,
   PlantillaInsert,
@@ -8,111 +10,144 @@ import type {
   JobConDetalle,
 } from '../types/whatsapp.types'
 
+export interface JobConCampana extends JobConPlantilla {
+  campana: { nombre: string }
+}
+
 const APP_URL = process.env.NEXT_PUBLIC_APP_URL ?? 'http://localhost:3000'
+
+const plantillaSelect = {
+  id: plantillasWhatsapp.id,
+  nombre: plantillasWhatsapp.nombre,
+  tipo: plantillasWhatsapp.tipo,
+  lineas: plantillasWhatsapp.lineas,
+  ruta_imagen: plantillasWhatsapp.rutaImagen,
+  activa: plantillasWhatsapp.activa,
+  created_at: plantillasWhatsapp.createdAt,
+  updated_at: plantillasWhatsapp.updatedAt,
+}
+
+const jobSelect = {
+  id: enviosWhatsappJobs.id,
+  campana_id: enviosWhatsappJobs.campanaId,
+  plantilla_id: enviosWhatsappJobs.plantillaId,
+  estado: enviosWhatsappJobs.estado,
+  total_contactos: enviosWhatsappJobs.totalContactos,
+  enviados: enviosWhatsappJobs.enviados,
+  errores: enviosWhatsappJobs.errores,
+  created_at: enviosWhatsappJobs.createdAt,
+  started_at: enviosWhatsappJobs.startedAt,
+  completed_at: enviosWhatsappJobs.completedAt,
+}
+
+const detalleSelect = {
+  id: enviosWhatsappDetalle.id,
+  job_id: enviosWhatsappDetalle.jobId,
+  encuesta_id: enviosWhatsappDetalle.encuestaId,
+  celular: enviosWhatsappDetalle.celular,
+  nombre: enviosWhatsappDetalle.nombre,
+  url_encuesta: enviosWhatsappDetalle.urlEncuesta,
+  estado: enviosWhatsappDetalle.estado,
+  enviado_at: enviosWhatsappDetalle.enviadoAt,
+  error_mensaje: enviosWhatsappDetalle.errorMensaje,
+}
 
 // ─── Plantillas ──────────────────────────────────────────────────────────────
 
 export async function getPlantillas(): Promise<PlantillaWhatsapp[]> {
-  const supabase = await createSupabaseServer()
-  const { data, error } = await supabase
-    .from('plantillas_whatsapp')
-    .select('*')
-    .order('created_at', { ascending: true })
-  if (error) throw error
-  return data
+  return db.select(plantillaSelect).from(plantillasWhatsapp).orderBy(asc(plantillasWhatsapp.createdAt))
 }
 
 export async function getPlantillaById(id: string): Promise<PlantillaWhatsapp | null> {
-  const supabase = await createSupabaseServer()
-  const { data, error } = await supabase
-    .from('plantillas_whatsapp')
-    .select('*')
-    .eq('id', id)
-    .single()
-  if (error) return null
-  return data
+  const [row] = await db.select(plantillaSelect).from(plantillasWhatsapp).where(eq(plantillasWhatsapp.id, id)).limit(1)
+  return row ?? null
 }
 
 export async function createPlantilla(input: PlantillaInsert): Promise<PlantillaWhatsapp> {
-  const supabase = await createSupabaseServer()
-  const { data, error } = await supabase
-    .from('plantillas_whatsapp')
-    .insert(input)
-    .select()
-    .single()
-  if (error) throw error
-  return data
+  const [row] = await db
+    .insert(plantillasWhatsapp)
+    .values({
+      nombre: input.nombre!,
+      tipo: input.tipo!,
+      lineas: input.lineas,
+      rutaImagen: input.ruta_imagen,
+      activa: input.activa,
+    })
+    .returning(plantillaSelect)
+  return row
 }
 
 export async function updatePlantilla(id: string, input: PlantillaUpdate): Promise<PlantillaWhatsapp> {
-  const supabase = await createSupabaseServer()
-  const { data, error } = await supabase
-    .from('plantillas_whatsapp')
-    .update({ ...input, updated_at: new Date().toISOString() })
-    .eq('id', id)
-    .select()
-    .single()
-  if (error) throw error
-  return data
+  const [row] = await db
+    .update(plantillasWhatsapp)
+    .set({
+      nombre: input.nombre,
+      tipo: input.tipo,
+      lineas: input.lineas,
+      rutaImagen: input.ruta_imagen,
+      activa: input.activa,
+      updatedAt: new Date().toISOString(),
+    })
+    .where(eq(plantillasWhatsapp.id, id))
+    .returning(plantillaSelect)
+  return row
 }
 
 export async function duplicarPlantilla(id: string): Promise<PlantillaWhatsapp> {
   const original = await getPlantillaById(id)
   if (!original) throw new Error('Plantilla no encontrada')
   return createPlantilla({
-    nombre:      `${original.nombre} (copia)`,
-    tipo:        original.tipo,
-    lineas:      original.lineas,
+    nombre: `${original.nombre} (copia)`,
+    tipo: original.tipo,
+    lineas: original.lineas,
     ruta_imagen: original.ruta_imagen,
-    activa:      false,
+    activa: false,
   })
 }
 
 export async function archivarPlantilla(id: string): Promise<void> {
-  const supabase = await createSupabaseServer()
-  const { error } = await supabase
-    .from('plantillas_whatsapp')
-    .update({ activa: false, updated_at: new Date().toISOString() })
-    .eq('id', id)
-  if (error) throw error
+  await db.update(plantillasWhatsapp).set({ activa: false, updatedAt: new Date().toISOString() }).where(eq(plantillasWhatsapp.id, id))
 }
 
 // ─── Jobs ────────────────────────────────────────────────────────────────────
 
 export async function getJobsByCampana(campanaId: string): Promise<JobConPlantilla[]> {
-  const supabase = await createSupabaseServer()
-  const { data, error } = await supabase
-    .from('envios_whatsapp_jobs')
-    .select(`*, plantilla:plantillas_whatsapp(nombre, tipo)`)
-    .eq('campana_id', campanaId)
-    .order('created_at', { ascending: false })
-  if (error) throw error
-  return data as JobConPlantilla[]
-}
-
-export interface JobConCampana extends JobConPlantilla {
-  campana: { nombre: string }
+  const rows = await db
+    .select({ ...jobSelect, plantilla: { nombre: plantillasWhatsapp.nombre, tipo: plantillasWhatsapp.tipo } })
+    .from(enviosWhatsappJobs)
+    .innerJoin(plantillasWhatsapp, eq(enviosWhatsappJobs.plantillaId, plantillasWhatsapp.id))
+    .where(eq(enviosWhatsappJobs.campanaId, campanaId))
+    .orderBy(desc(enviosWhatsappJobs.createdAt))
+  return rows
 }
 
 export async function getAllJobs(): Promise<JobConCampana[]> {
-  const supabase = await createSupabaseServer()
-  const { data, error } = await supabase
-    .from('envios_whatsapp_jobs')
-    .select(`*, plantilla:plantillas_whatsapp(nombre, tipo), campana:campanas(nombre)`)
-    .order('created_at', { ascending: false })
-  if (error) throw error
-  return data as unknown as JobConCampana[]
+  const rows = await db
+    .select({
+      ...jobSelect,
+      plantilla: { nombre: plantillasWhatsapp.nombre, tipo: plantillasWhatsapp.tipo },
+      campana: { nombre: campanas.nombre },
+    })
+    .from(enviosWhatsappJobs)
+    .innerJoin(plantillasWhatsapp, eq(enviosWhatsappJobs.plantillaId, plantillasWhatsapp.id))
+    .innerJoin(campanas, eq(enviosWhatsappJobs.campanaId, campanas.id))
+    .orderBy(desc(enviosWhatsappJobs.createdAt))
+  return rows
 }
 
 export async function getJobConDetalle(jobId: string): Promise<JobConDetalle | null> {
-  const supabase = await createSupabaseServer()
-  const { data, error } = await supabase
-    .from('envios_whatsapp_jobs')
-    .select(`*, plantilla:plantillas_whatsapp(nombre, tipo), detalles:envios_whatsapp_detalle(*)`)
-    .eq('id', jobId)
-    .single()
-  if (error) return null
-  return data as JobConDetalle
+  const [job] = await db
+    .select({ ...jobSelect, plantilla: { nombre: plantillasWhatsapp.nombre, tipo: plantillasWhatsapp.tipo } })
+    .from(enviosWhatsappJobs)
+    .innerJoin(plantillasWhatsapp, eq(enviosWhatsappJobs.plantillaId, plantillasWhatsapp.id))
+    .where(eq(enviosWhatsappJobs.id, jobId))
+    .limit(1)
+
+  if (!job) return null
+
+  const detalles = await db.select(detalleSelect).from(enviosWhatsappDetalle).where(eq(enviosWhatsappDetalle.jobId, jobId))
+
+  return { ...job, detalles }
 }
 
 // ─── Crear job ───────────────────────────────────────────────────────────────
@@ -120,69 +155,57 @@ export async function getJobConDetalle(jobId: string): Promise<JobConDetalle | n
 export async function crearJob(
   campanaId: string,
   plantillaId: string,
-  soloRespondibles: boolean = false,
+  soloRespondibles: boolean = false
 ): Promise<WhatsappJob> {
-  const supabase = await createSupabaseServer()
-
-  // Obtener contactos pendientes de la campaña (no respondidos)
   type EncuestaEstado = 'pendiente' | 'respondida' | 'recordatorio_enviado' | 'necesidad_de_llamado' | 'sin_respuesta'
   const estadosIncluidos: EncuestaEstado[] = soloRespondibles
     ? ['pendiente', 'recordatorio_enviado']
     : ['pendiente', 'recordatorio_enviado', 'necesidad_de_llamado']
 
-  const { data: encuestas, error: encError } = await supabase
-    .from('encuestas')
-    .select(`id, token, estado, cliente:clientes(nombre, telefono)`)
-    .eq('campana_id', campanaId)
-    .in('estado', estadosIncluidos)
-
-  if (encError) throw encError
-  if (!encuestas || encuestas.length === 0) throw new Error('No hay contactos pendientes para esta campaña')
-
-  // Crear el job
-  const { data: job, error: jobError } = await supabase
-    .from('envios_whatsapp_jobs')
-    .insert({
-      campana_id:      campanaId,
-      plantilla_id:    plantillaId,
-      estado:          'pendiente',
-      total_contactos: encuestas.length,
+  const contactos = await db
+    .select({
+      id: encuestas.id,
+      token: encuestas.token,
+      clienteNombre: clientes.nombre,
+      clienteTelefono: clientes.telefono,
     })
-    .select()
-    .single()
+    .from(encuestas)
+    .innerJoin(clientes, eq(encuestas.clienteId, clientes.id))
+    .where(and(eq(encuestas.campanaId, campanaId), inArray(encuestas.estado, estadosIncluidos)))
 
-  if (jobError) throw jobError
+  if (contactos.length === 0) throw new Error('No hay contactos pendientes para esta campaña')
 
-  // Crear detalle por cada contacto
-  const detalles = encuestas.map((e) => {
-    const cliente = e.cliente as { nombre: string; telefono: string }
-    return {
-      job_id:       job.id,
-      encuesta_id:  e.id,
-      celular:      cliente.telefono,
-      nombre:       cliente.nombre,
-      url_encuesta: `${APP_URL}/encuesta?token=${e.token}`,
-      estado:       'pendiente' as const,
-    }
+  return db.transaction(async (tx) => {
+    const [job] = await tx
+      .insert(enviosWhatsappJobs)
+      .values({
+        campanaId,
+        plantillaId,
+        estado: 'pendiente',
+        totalContactos: contactos.length,
+      })
+      .returning(jobSelect)
+
+    await tx.insert(enviosWhatsappDetalle).values(
+      contactos.map((c) => ({
+        jobId: job.id,
+        encuestaId: c.id,
+        celular: c.clienteTelefono,
+        nombre: c.clienteNombre,
+        urlEncuesta: `${APP_URL}/encuesta?token=${c.token}`,
+        estado: 'pendiente' as const,
+      }))
+    )
+
+    return job
   })
-
-  const { error: detalleError } = await supabase
-    .from('envios_whatsapp_detalle')
-    .insert(detalles)
-
-  if (detalleError) throw detalleError
-
-  return job
 }
 
 export async function detenerJob(jobId: string): Promise<void> {
-  const supabase = await createSupabaseServer()
-  const { error } = await supabase
-    .from('envios_whatsapp_jobs')
-    .update({ estado: 'interrumpido' })
-    .eq('id', jobId)
-    .in('estado', ['en_progreso', 'pendiente'])
-  if (error) throw error
+  await db
+    .update(enviosWhatsappJobs)
+    .set({ estado: 'interrumpido' })
+    .where(and(eq(enviosWhatsappJobs.id, jobId), inArray(enviosWhatsappJobs.estado, ['en_progreso', 'pendiente'])))
 }
 
 export { renderizarMensaje } from '../utils/renderizar'
