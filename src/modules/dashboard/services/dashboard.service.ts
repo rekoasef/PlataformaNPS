@@ -1,4 +1,6 @@
-import { createSupabaseServer } from '@/lib/supabase/server'
+import { db } from '@/lib/db/client'
+import { campanas, clientes, encuestas, respuestas, tiposEncuesta } from '@/lib/db/schema'
+import { and, desc, eq, inArray, ne, sql } from 'drizzle-orm'
 import { TECNOLOGIAS, type Tecnologia } from '@/lib/utils/tecnologia'
 import { getCalificacionesConfigPorSlug, type CalificacionConfigItem } from '../utils/calificaciones'
 import {
@@ -6,103 +8,6 @@ import {
   type NpsAnswerStatus,
   type NpsDimension,
 } from '../utils/nps'
-
-type RawEncuestaConRespuesta = {
-  id: string
-  created_at: string
-  campanas:
-    | {
-        id: string
-        nombre: string
-        fecha: string
-        tipos_encuesta: { nombre: string; slug: string }[] | { nombre: string; slug: string } | null
-      }[]
-    | {
-        id: string
-        nombre: string
-        fecha: string
-        tipos_encuesta: { nombre: string; slug: string }[] | { nombre: string; slug: string } | null
-      }
-    | null
-  clientes:
-    | {
-        id: string
-        nombre: string
-        telefono: string
-        concesionario: string
-        orden_fabricacion: string | null
-        tecnologia: Tecnologia | null
-      }[]
-    | {
-        id: string
-        nombre: string
-        telefono: string
-        concesionario: string
-        orden_fabricacion: string | null
-        tecnologia: Tecnologia | null
-      }
-    | null
-  respuestas:
-    | {
-        fecha_respuesta: string
-        nombre_apellido: string | null
-        calle_numero: string | null
-        piso_departamento: string | null
-        localidad: string | null
-        codigo_postal: string | null
-        provincia: string | null
-        email: string | null
-        telefono: string | null
-        concesionario_sede: string | null
-        maquina_modelo: string | null
-        tipo_maquina: 'sembradora' | 'fertilizadora'
-        nombre_firma_factura: string | null
-        calificacion_entrega_presentacion: number | null
-        calificacion_capacitacion: number | null
-        calificacion_tecnico: number | null
-        calificacion_funcionamiento_anual: number | null
-        tuvo_problemas_tecnicos: boolean | null
-        calificacion_resolucion_problemas: number | null
-        comentario_problemas: string | null
-        nps_producto: number
-        nps_empresa: number
-        nps_concesionario: number
-        comentario_producto: string | null
-        comentario_empresa: string | null
-        comentario_general: string | null
-        canal_respuesta: 'mensaje' | 'llamado'
-      }[]
-    | {
-        fecha_respuesta: string
-        nombre_apellido: string | null
-        calle_numero: string | null
-        piso_departamento: string | null
-        localidad: string | null
-        codigo_postal: string | null
-        provincia: string | null
-        email: string | null
-        telefono: string | null
-        concesionario_sede: string | null
-        maquina_modelo: string | null
-        tipo_maquina: 'sembradora' | 'fertilizadora'
-        nombre_firma_factura: string | null
-        calificacion_entrega_presentacion: number | null
-        calificacion_capacitacion: number | null
-        calificacion_tecnico: number | null
-        calificacion_funcionamiento_anual: number | null
-        tuvo_problemas_tecnicos: boolean | null
-        calificacion_resolucion_problemas: number | null
-        comentario_problemas: string | null
-        nps_producto: number
-        nps_empresa: number
-        nps_concesionario: number
-        comentario_producto: string | null
-        comentario_empresa: string | null
-        comentario_general: string | null
-        canal_respuesta: 'mensaje' | 'llamado'
-      }
-    | null
-}
 
 export type RespuestaDetalle = {
   encuestaId: string
@@ -214,11 +119,6 @@ export type ComparativoPorCanal = {
   npsConcesionario: number | null
 }
 
-function pickOne<T>(value: T | T[] | null): T | null {
-  if (!value) return null
-  return Array.isArray(value) ? value[0] ?? null : value
-}
-
 function calcularNps(values: number[]) {
   if (values.length === 0) return null
 
@@ -236,138 +136,122 @@ function getNpsValues(respuesta: RespuestaDetalle, dimension?: NpsDimension) {
   return [respuesta.npsConcesionario, respuesta.npsProducto, respuesta.npsEmpresa]
 }
 
-function mapRespuesta(row: RawEncuestaConRespuesta): RespuestaDetalle | null {
-  const campana = pickOne(row.campanas)
-  const tipoEncuesta = campana ? pickOne(campana.tipos_encuesta) : null
-  const cliente = pickOne(row.clientes)
-  const respuesta = pickOne(row.respuestas)
-
-  if (!cliente || !respuesta) return null
-
-  return {
-    encuestaId: row.id,
-    fechaEnvioEncuesta: row.created_at,
-    fechaRespuesta: respuesta.fecha_respuesta,
-    campanaId: campana?.id ?? null,
-    campanaNombre: campana?.nombre ?? 'Campaña sin nombre',
-    campanaFecha: campana?.fecha ?? null,
-    tipoEncuestaSlug: tipoEncuesta?.slug ?? null,
-    tipoEncuestaNombre: tipoEncuesta?.nombre ?? null,
-    clienteNombre: cliente.nombre,
-    clienteTelefono: cliente.telefono,
-    concesionario: cliente.concesionario,
-    ordenFabricacion: cliente.orden_fabricacion,
-    tecnologia: cliente.tecnologia,
-    nombreApellido: respuesta.nombre_apellido,
-    calleNumero: respuesta.calle_numero,
-    pisoDepartamento: respuesta.piso_departamento,
-    localidad: respuesta.localidad,
-    codigoPostal: respuesta.codigo_postal,
-    provincia: respuesta.provincia,
-    email: respuesta.email,
-    telefono: respuesta.telefono,
-    concesionarioSede: respuesta.concesionario_sede,
-    maquinaModelo: respuesta.maquina_modelo,
-    tipoMaquina: respuesta.tipo_maquina,
-    nombreFirmaFactura: respuesta.nombre_firma_factura,
-    calificacionEntregaPresentacion: respuesta.calificacion_entrega_presentacion,
-    calificacionCapacitacion: respuesta.calificacion_capacitacion,
-    calificacionTecnico: respuesta.calificacion_tecnico,
-    calificacionFuncionamientoAnual: respuesta.calificacion_funcionamiento_anual,
-    tuvoProblemasTecnicos: respuesta.tuvo_problemas_tecnicos,
-    calificacionResolucionProblemas: respuesta.calificacion_resolucion_problemas,
-    comentarioProblemas: respuesta.comentario_problemas,
-    npsProducto: respuesta.nps_producto,
-    npsEmpresa: respuesta.nps_empresa,
-    npsConcesionario: respuesta.nps_concesionario,
-    comentarioProducto: respuesta.comentario_producto,
-    comentarioEmpresa: respuesta.comentario_empresa,
-    comentarioGeneral: respuesta.comentario_general,
-    canalRespuesta: respuesta.canal_respuesta,
-    fechaRespuestaDate: new Date(respuesta.fecha_respuesta),
-  }
-}
-
-export async function getRespuestas(filters: DashboardFilters = {}) {
-  const supabase = await createSupabaseServer()
-
+export async function getRespuestas(filters: DashboardFilters = {}): Promise<RespuestaDetalle[]> {
   // Si se filtra por tipo de encuesta, pre-filtramos los campana_ids
   let campanaIdsFiltro: string[] | null = null
   if (filters.tipoEncuestaId) {
-    const { data: campanasFiltradas } = await supabase
-      .from('campanas')
-      .select('id')
-      .eq('tipo_encuesta_id', filters.tipoEncuestaId)
-    campanaIdsFiltro = (campanasFiltradas ?? []).map((c) => c.id)
-  }
-
-  let query = supabase
-    .from('encuestas')
-    .select(`
-      id,
-      created_at,
-      campanas(id, nombre, fecha, tipos_encuesta(nombre, slug)),
-      clientes(id, nombre, telefono, concesionario, orden_fabricacion, tecnologia),
-      respuestas(
-        fecha_respuesta,
-        nombre_apellido,
-        calle_numero,
-        piso_departamento,
-        localidad,
-        codigo_postal,
-        provincia,
-        email,
-        telefono,
-        concesionario_sede,
-        maquina_modelo,
-        tipo_maquina,
-        nombre_firma_factura,
-        calificacion_entrega_presentacion,
-        calificacion_capacitacion,
-        calificacion_tecnico,
-        calificacion_funcionamiento_anual,
-        tuvo_problemas_tecnicos,
-        calificacion_resolucion_problemas,
-        comentario_problemas,
-        nps_producto,
-        nps_empresa,
-        nps_concesionario,
-        comentario_producto,
-        comentario_empresa,
-        comentario_general,
-        canal_respuesta
-      )
-    `)
-    .eq('estado', 'respondida')
-    .order('created_at', { ascending: false })
-
-  if (filters.concesionario) {
-    query = query.eq('clientes.concesionario', filters.concesionario)
-  }
-
-  if (filters.tecnologia) {
-    query = query.eq('clientes.tecnologia', filters.tecnologia)
-  }
-
-  if (filters.campanaId) {
-    query = query.eq('campana_id', filters.campanaId)
-  }
-
-  if (campanaIdsFiltro !== null) {
+    const campanasFiltradas = await db.select({ id: campanas.id }).from(campanas).where(eq(campanas.tipoEncuestaId, filters.tipoEncuestaId))
+    campanaIdsFiltro = campanasFiltradas.map((c) => c.id)
     if (campanaIdsFiltro.length === 0) return []
-    query = query.in('campana_id', campanaIdsFiltro)
   }
 
-  const { data, error } = await query
-  if (error) throw error
+  const conditions = [eq(encuestas.estado, 'respondida')]
+  if (filters.campanaId) conditions.push(eq(encuestas.campanaId, filters.campanaId))
+  if (campanaIdsFiltro !== null) conditions.push(inArray(encuestas.campanaId, campanaIdsFiltro))
+  if (filters.concesionario) conditions.push(eq(clientes.concesionario, filters.concesionario))
+  if (filters.tecnologia) conditions.push(eq(clientes.tecnologia, filters.tecnologia))
 
-  let respuestas = (data as unknown as RawEncuestaConRespuesta[])
-    .map(mapRespuesta)
-    .filter((item): item is RespuestaDetalle => Boolean(item))
+  const rows = await db
+    .select({
+      encuestaId: encuestas.id,
+      fechaEnvioEncuesta: encuestas.createdAt,
+      campanaId: campanas.id,
+      campanaNombre: campanas.nombre,
+      campanaFecha: campanas.fecha,
+      tipoEncuestaSlug: tiposEncuesta.slug,
+      tipoEncuestaNombre: tiposEncuesta.nombre,
+      clienteNombre: clientes.nombre,
+      clienteTelefono: clientes.telefono,
+      concesionario: clientes.concesionario,
+      ordenFabricacion: clientes.ordenFabricacion,
+      tecnologia: clientes.tecnologia,
+      fechaRespuesta: respuestas.fechaRespuesta,
+      nombreApellido: respuestas.nombreApellido,
+      calleNumero: respuestas.calleNumero,
+      pisoDepartamento: respuestas.pisoDepartamento,
+      localidad: respuestas.localidad,
+      codigoPostal: respuestas.codigoPostal,
+      provincia: respuestas.provincia,
+      email: respuestas.email,
+      telefono: respuestas.telefono,
+      concesionarioSede: respuestas.concesionarioSede,
+      maquinaModelo: respuestas.maquinaModelo,
+      tipoMaquina: respuestas.tipoMaquina,
+      nombreFirmaFactura: respuestas.nombreFirmaFactura,
+      calificacionEntregaPresentacion: respuestas.calificacionEntregaPresentacion,
+      calificacionCapacitacion: respuestas.calificacionCapacitacion,
+      calificacionTecnico: respuestas.calificacionTecnico,
+      calificacionFuncionamientoAnual: respuestas.calificacionFuncionamientoAnual,
+      tuvoProblemasTecnicos: respuestas.tuvoProblemasTecnicos,
+      calificacionResolucionProblemas: respuestas.calificacionResolucionProblemas,
+      comentarioProblemas: respuestas.comentarioProblemas,
+      npsProducto: respuestas.npsProducto,
+      npsEmpresa: respuestas.npsEmpresa,
+      npsConcesionario: respuestas.npsConcesionario,
+      comentarioProducto: respuestas.comentarioProducto,
+      comentarioEmpresa: respuestas.comentarioEmpresa,
+      comentarioGeneral: respuestas.comentarioGeneral,
+      canalRespuesta: respuestas.canalRespuesta,
+    })
+    .from(encuestas)
+    .innerJoin(campanas, eq(encuestas.campanaId, campanas.id))
+    .leftJoin(tiposEncuesta, eq(campanas.tipoEncuestaId, tiposEncuesta.id))
+    .innerJoin(clientes, eq(encuestas.clienteId, clientes.id))
+    // left join: 'respondida' implica que existe una respuesta (por el trigger
+    // que actualiza el estado), pero se deja como left join defensivo — igual
+    // que hacía el embed de Supabase — y se filtran los que no la tengan.
+    .leftJoin(respuestas, eq(respuestas.encuestaId, encuestas.id))
+    .where(and(...conditions))
+    .orderBy(desc(encuestas.createdAt))
+
+  let resultado: RespuestaDetalle[] = rows
+    .filter((row) => row.fechaRespuesta !== null)
+    .map((row) => ({
+      encuestaId: row.encuestaId,
+      fechaEnvioEncuesta: row.fechaEnvioEncuesta,
+      fechaRespuesta: row.fechaRespuesta!,
+      campanaId: row.campanaId,
+      campanaNombre: row.campanaNombre ?? 'Campaña sin nombre',
+      campanaFecha: row.campanaFecha,
+      tipoEncuestaSlug: row.tipoEncuestaSlug,
+      tipoEncuestaNombre: row.tipoEncuestaNombre,
+      clienteNombre: row.clienteNombre,
+      clienteTelefono: row.clienteTelefono,
+      concesionario: row.concesionario,
+      ordenFabricacion: row.ordenFabricacion,
+      tecnologia: row.tecnologia as Tecnologia | null,
+      nombreApellido: row.nombreApellido,
+      calleNumero: row.calleNumero,
+      pisoDepartamento: row.pisoDepartamento,
+      localidad: row.localidad,
+      codigoPostal: row.codigoPostal,
+      provincia: row.provincia,
+      email: row.email,
+      telefono: row.telefono,
+      concesionarioSede: row.concesionarioSede,
+      maquinaModelo: row.maquinaModelo,
+      tipoMaquina: row.tipoMaquina!,
+      nombreFirmaFactura: row.nombreFirmaFactura,
+      calificacionEntregaPresentacion: row.calificacionEntregaPresentacion,
+      calificacionCapacitacion: row.calificacionCapacitacion,
+      calificacionTecnico: row.calificacionTecnico,
+      calificacionFuncionamientoAnual: row.calificacionFuncionamientoAnual,
+      tuvoProblemasTecnicos: row.tuvoProblemasTecnicos,
+      calificacionResolucionProblemas: row.calificacionResolucionProblemas,
+      comentarioProblemas: row.comentarioProblemas,
+      npsProducto: row.npsProducto!,
+      npsEmpresa: row.npsEmpresa!,
+      npsConcesionario: row.npsConcesionario!,
+      comentarioProducto: row.comentarioProducto,
+      comentarioEmpresa: row.comentarioEmpresa,
+      comentarioGeneral: row.comentarioGeneral,
+      canalRespuesta: row.canalRespuesta as 'mensaje' | 'llamado',
+      fechaRespuestaDate: new Date(row.fechaRespuesta!),
+    }))
 
   if (filters.q) {
     const needle = filters.q.toLowerCase()
-    respuestas = respuestas.filter((item) =>
+    resultado = resultado.filter((item) =>
       [
         item.clienteNombre,
         item.nombreApellido ?? '',
@@ -382,70 +266,69 @@ export async function getRespuestas(filters: DashboardFilters = {}) {
   }
 
   if (filters.concesionario) {
-    respuestas = respuestas.filter((item) => item.concesionario === filters.concesionario)
+    resultado = resultado.filter((item) => item.concesionario === filters.concesionario)
   }
 
   if (filters.tecnologia) {
-    respuestas = respuestas.filter((item) => item.tecnologia === filters.tecnologia)
+    resultado = resultado.filter((item) => item.tecnologia === filters.tecnologia)
   }
 
   if (filters.fechaDesde) {
     const from = new Date(`${filters.fechaDesde}T00:00:00`)
-    respuestas = respuestas.filter((item) => item.fechaRespuestaDate >= from)
+    resultado = resultado.filter((item) => item.fechaRespuestaDate >= from)
   }
 
   if (filters.fechaHasta) {
     const to = new Date(`${filters.fechaHasta}T23:59:59.999`)
-    respuestas = respuestas.filter((item) => item.fechaRespuestaDate <= to)
+    resultado = resultado.filter((item) => item.fechaRespuestaDate <= to)
   }
 
   if (filters.tipoMaquina) {
-    respuestas = respuestas.filter((item) => item.tipoMaquina === filters.tipoMaquina)
+    resultado = resultado.filter((item) => item.tipoMaquina === filters.tipoMaquina)
   }
 
   if (filters.estadoNps) {
     const estadoNps = filters.estadoNps
-    respuestas = respuestas.filter((item) =>
-      getNpsValues(item, filters.npsDimension).some((value) =>
-        matchesNpsAnswerStatus(value, estadoNps)
-      )
+    resultado = resultado.filter((item) =>
+      getNpsValues(item, filters.npsDimension).some((value) => matchesNpsAnswerStatus(value, estadoNps))
     )
   }
 
   if (filters.canal) {
-    respuestas = respuestas.filter((item) => item.canalRespuesta === filters.canal)
+    resultado = resultado.filter((item) => item.canalRespuesta === filters.canal)
   }
 
-  return respuestas
+  return resultado
 }
 
 export async function getDashboardFilterOptions() {
-  const supabase = await createSupabaseServer()
-  const [respuestas, tiposResult] = await Promise.all([
+  const [respuestasData, tiposEncuestaRows] = await Promise.all([
     getRespuestas(),
-    supabase.from('tipos_encuesta').select('id, nombre, slug').eq('activo', true).order('created_at'),
+    db
+      .select({ id: tiposEncuesta.id, nombre: tiposEncuesta.nombre, slug: tiposEncuesta.slug })
+      .from(tiposEncuesta)
+      .where(eq(tiposEncuesta.activo, true))
+      .orderBy(tiposEncuesta.createdAt),
   ])
 
-  const concesionarios = Array.from(new Set(respuestas.map((item) => item.concesionario))).sort()
-  const campanas = Array.from(
+  const concesionarios = Array.from(new Set(respuestasData.map((item) => item.concesionario))).sort()
+  const campanasOptions = Array.from(
     new Map(
-      respuestas.map((item) => [
+      respuestasData.map((item) => [
         item.campanaId ?? item.campanaNombre,
         { id: item.campanaId, nombre: item.campanaNombre },
       ])
     ).values()
   ).sort((a, b) => a.nombre.localeCompare(b.nombre))
 
-  const tiposEncuesta = tiposResult.data ?? []
-
-  return { concesionarios, campanas, tecnologias: TECNOLOGIAS, tiposEncuesta }
+  return { concesionarios, campanas: campanasOptions, tecnologias: TECNOLOGIAS, tiposEncuesta: tiposEncuestaRows }
 }
 
 export async function getNpsPorConcesionario(filters: DashboardFilters = {}): Promise<ConcesionarioNpsRow[]> {
-  const respuestas = await getRespuestas(filters)
+  const respuestasData = await getRespuestas(filters)
   const grouped = new Map<string, RespuestaDetalle[]>()
 
-  for (const respuesta of respuestas) {
+  for (const respuesta of respuestasData) {
     const current = grouped.get(respuesta.concesionario) ?? []
     current.push(respuesta)
     grouped.set(respuesta.concesionario, current)
@@ -506,16 +389,16 @@ function calcularDistribucion(label: string, values: number[]): NpsDistribucionR
 }
 
 export async function getNpsDistribucion(filters: DashboardFilters = {}): Promise<NpsDistribucionRow[]> {
-  const respuestas = await getRespuestas(filters)
+  const respuestasData = await getRespuestas(filters)
 
-  const sembradoras = respuestas.filter((item) => item.tipoMaquina === 'sembradora')
-  const fertilizadoras = respuestas.filter((item) => item.tipoMaquina === 'fertilizadora')
+  const sembradoras = respuestasData.filter((item) => item.tipoMaquina === 'sembradora')
+  const fertilizadoras = respuestasData.filter((item) => item.tipoMaquina === 'fertilizadora')
 
   return [
     calcularDistribucion('Producto · Sembradora', sembradoras.map((item) => item.npsProducto)),
     calcularDistribucion('Producto · Fertilizadora', fertilizadoras.map((item) => item.npsProducto)),
-    calcularDistribucion('Concesionario', respuestas.map((item) => item.npsConcesionario)),
-    calcularDistribucion('Empresa', respuestas.map((item) => item.npsEmpresa)),
+    calcularDistribucion('Concesionario', respuestasData.map((item) => item.npsConcesionario)),
+    calcularDistribucion('Empresa', respuestasData.map((item) => item.npsEmpresa)),
   ]
 }
 
@@ -537,104 +420,68 @@ export async function getNpsDistribucionPorTipoEncuesta(
   )
 }
 
-export async function getNpsResumenExtendido(
-  filters: DashboardFilters = {}
-): Promise<NpsResumenExtendido> {
-  const respuestas = await getRespuestas(filters)
+export async function getNpsResumenExtendido(filters: DashboardFilters = {}): Promise<NpsResumenExtendido> {
+  const respuestasData = await getRespuestas(filters)
 
-  const sembradoras = respuestas.filter((item) => item.tipoMaquina === 'sembradora')
-  const fertilizadoras = respuestas.filter((item) => item.tipoMaquina === 'fertilizadora')
+  const sembradoras = respuestasData.filter((item) => item.tipoMaquina === 'sembradora')
+  const fertilizadoras = respuestasData.filter((item) => item.tipoMaquina === 'fertilizadora')
 
   return {
-    totalRespuestas: respuestas.length,
+    totalRespuestas: respuestasData.length,
     npsSembradora: calcularNps(sembradoras.map((item) => item.npsProducto)),
     totalSembradora: sembradoras.length,
     npsFertilizadora: calcularNps(fertilizadoras.map((item) => item.npsProducto)),
     totalFertilizadora: fertilizadoras.length,
-    npsConcesionario: calcularNps(respuestas.map((item) => item.npsConcesionario)),
-    npsEmpresa: calcularNps(respuestas.map((item) => item.npsEmpresa)),
+    npsConcesionario: calcularNps(respuestasData.map((item) => item.npsConcesionario)),
+    npsEmpresa: calcularNps(respuestasData.map((item) => item.npsEmpresa)),
   }
 }
 
-export async function getEfectividadEnvios(
-  filters: DashboardFilters = {}
-): Promise<EfectividadEnvios> {
-  const supabase = await createSupabaseServer()
-
-  // Pre-filtrar campanas por tipo si corresponde
+export async function getEfectividadEnvios(filters: DashboardFilters = {}): Promise<EfectividadEnvios> {
   let campanaIdsFiltro: string[] | null = null
   if (filters.tipoEncuestaId) {
-    const { data: campanasFiltradas } = await supabase
-      .from('campanas')
-      .select('id')
-      .eq('tipo_encuesta_id', filters.tipoEncuestaId)
-    campanaIdsFiltro = (campanasFiltradas ?? []).map((c) => c.id)
+    const campanasFiltradas = await db.select({ id: campanas.id }).from(campanas).where(eq(campanas.tipoEncuestaId, filters.tipoEncuestaId))
+    campanaIdsFiltro = campanasFiltradas.map((c) => c.id)
+    if (campanaIdsFiltro.length === 0) return { enviadas: 0, respondidas: 0, porcentaje: null }
   }
 
-  let enviadasQuery = supabase
-    .from('encuestas')
-    .select('id, clientes!inner(concesionario, tecnologia)', { count: 'exact', head: true })
-    .neq('estado', 'pendiente')
+  const baseConditions = []
+  if (campanaIdsFiltro !== null) baseConditions.push(inArray(encuestas.campanaId, campanaIdsFiltro))
+  if (filters.campanaId) baseConditions.push(eq(encuestas.campanaId, filters.campanaId))
+  if (filters.concesionario) baseConditions.push(eq(clientes.concesionario, filters.concesionario))
+  if (filters.tecnologia) baseConditions.push(eq(clientes.tecnologia, filters.tecnologia))
 
-  let respondidasQuery = supabase
-    .from('encuestas')
-    .select('id, clientes!inner(concesionario, tecnologia)', { count: 'exact', head: true })
-    .eq('estado', 'respondida')
-
-  if (campanaIdsFiltro !== null) {
-    if (campanaIdsFiltro.length === 0) {
-      return { enviadas: 0, respondidas: 0, porcentaje: null }
-    }
-    enviadasQuery = enviadasQuery.in('campana_id', campanaIdsFiltro)
-    respondidasQuery = respondidasQuery.in('campana_id', campanaIdsFiltro)
-  }
-
-  if (filters.campanaId) {
-    enviadasQuery = enviadasQuery.eq('campana_id', filters.campanaId)
-    respondidasQuery = respondidasQuery.eq('campana_id', filters.campanaId)
-  }
-
-  if (filters.concesionario) {
-    enviadasQuery = enviadasQuery.eq('clientes.concesionario', filters.concesionario)
-    respondidasQuery = respondidasQuery.eq('clientes.concesionario', filters.concesionario)
-  }
-
-  if (filters.tecnologia) {
-    enviadasQuery = enviadasQuery.eq('clientes.tecnologia', filters.tecnologia)
-    respondidasQuery = respondidasQuery.eq('clientes.tecnologia', filters.tecnologia)
-  }
-
-  const [{ count: enviadasCount, error: enviosError }, { count: respondidasCount, error: respError }] =
-    await Promise.all([enviadasQuery, respondidasQuery])
-
-  if (enviosError) throw enviosError
-  if (respError) throw respError
-
-  const enviadas = enviadasCount ?? 0
-  const respondidas = respondidasCount ?? 0
+  const [[{ enviadas }], [{ respondidas }]] = await Promise.all([
+    db
+      .select({ enviadas: sql<number>`count(*)::int` })
+      .from(encuestas)
+      .innerJoin(clientes, eq(encuestas.clienteId, clientes.id))
+      .where(and(ne(encuestas.estado, 'pendiente'), ...baseConditions)),
+    db
+      .select({ respondidas: sql<number>`count(*)::int` })
+      .from(encuestas)
+      .innerJoin(clientes, eq(encuestas.clienteId, clientes.id))
+      .where(and(eq(encuestas.estado, 'respondida'), ...baseConditions)),
+  ])
 
   return {
     enviadas,
     respondidas,
-    porcentaje:
-      enviadas === 0 ? null : Math.round((respondidas / enviadas) * 1000) / 10,
+    porcentaje: enviadas === 0 ? null : Math.round((respondidas / enviadas) * 1000) / 10,
   }
 }
 
 function calcularCalificaciones(
-  respuestas: RespuestaDetalle[],
+  respuestasData: RespuestaDetalle[],
   config: CalificacionConfigItem[]
 ): CalificacionResumen[] {
   return config.map(({ key, label, labelCorto }) => {
-    const values = respuestas
+    const values = respuestasData
       .map((r) => r[key] as number | null)
       .filter((v): v is number => v !== null)
 
     const total = values.length
-    const promedio =
-      total > 0
-        ? Math.round((values.reduce((acc, v) => acc + v, 0) / total) * 10) / 10
-        : null
+    const promedio = total > 0 ? Math.round((values.reduce((acc, v) => acc + v, 0) / total) * 10) / 10 : null
 
     const countMap = new Map<number, number>()
     for (let s = 1; s <= 10; s++) countMap.set(s, 0)
@@ -651,20 +498,14 @@ function calcularCalificaciones(
 export type TipoEncuestaRef = { id: string; nombre: string; slug: string }
 
 async function getTiposEncuestaActivos(tipoEncuestaId?: string): Promise<TipoEncuestaRef[]> {
-  const supabase = await createSupabaseServer()
+  const conditions = [eq(tiposEncuesta.activo, true)]
+  if (tipoEncuestaId) conditions.push(eq(tiposEncuesta.id, tipoEncuestaId))
 
-  let query = supabase
-    .from('tipos_encuesta')
-    .select('id, nombre, slug')
-    .eq('activo', true)
-    .order('created_at')
-
-  if (tipoEncuestaId) {
-    query = query.eq('id', tipoEncuestaId)
-  }
-
-  const { data } = await query
-  return data ?? []
+  return db
+    .select({ id: tiposEncuesta.id, nombre: tiposEncuesta.nombre, slug: tiposEncuesta.slug })
+    .from(tiposEncuesta)
+    .where(and(...conditions))
+    .orderBy(tiposEncuesta.createdAt)
 }
 
 export type CalificacionesPorTipo = {
@@ -679,9 +520,9 @@ export async function getCalificacionesPorTipoEncuesta(
 
   return Promise.all(
     tipos.map(async (tipo) => {
-      const respuestas = await getRespuestas({ ...filters, tipoEncuestaId: tipo.id })
+      const respuestasData = await getRespuestas({ ...filters, tipoEncuestaId: tipo.id })
       const config = getCalificacionesConfigPorSlug(tipo.slug)
-      return { tipo, calificaciones: calcularCalificaciones(respuestas, config) }
+      return { tipo, calificaciones: calcularCalificaciones(respuestasData, config) }
     })
   )
 }
@@ -693,16 +534,10 @@ export type NpsPorTipo = {
 }
 
 export async function getNpsPorTipoEncuesta(
-  baseFiltros: Omit<DashboardFilters, 'tipoEncuestaId'> = {},
+  baseFiltros: Omit<DashboardFilters, 'tipoEncuestaId'> = {}
 ): Promise<NpsPorTipo[]> {
-  const supabase = await createSupabaseServer()
-  const { data: tipos } = await supabase
-    .from('tipos_encuesta')
-    .select('id, nombre, slug')
-    .eq('activo', true)
-    .order('created_at')
-
-  if (!tipos?.length) return []
+  const tipos = await getTiposEncuestaActivos()
+  if (tipos.length === 0) return []
 
   return Promise.all(
     tipos.map(async (tipo) => {
@@ -712,20 +547,18 @@ export async function getNpsPorTipoEncuesta(
         getEfectividadEnvios(filtros),
       ])
       return { tipo, resumen, efectividad }
-    }),
+    })
   )
 }
 
-export async function getComparativoPorCanal(
-  filters: DashboardFilters = {}
-): Promise<ComparativoPorCanal[]> {
-  const respuestas = await getRespuestas(filters)
-  const total = respuestas.length
+export async function getComparativoPorCanal(filters: DashboardFilters = {}): Promise<ComparativoPorCanal[]> {
+  const respuestasData = await getRespuestas(filters)
+  const total = respuestasData.length
 
   const canales: Array<'mensaje' | 'llamado'> = ['mensaje', 'llamado']
 
   return canales.map((canal) => {
-    const grupo = respuestas.filter((item) => item.canalRespuesta === canal)
+    const grupo = respuestasData.filter((item) => item.canalRespuesta === canal)
     return {
       canal,
       total: grupo.length,
