@@ -1,10 +1,27 @@
 'use server'
 
 import { z } from 'zod'
-import { createSupabaseAdmin, createSupabaseServer } from '@/lib/supabase/server'
+import { createSupabaseServer } from '@/lib/supabase/server'
+import { db } from '@/lib/db/client'
+import {
+  campanas,
+  clientes,
+  encuestas,
+  envios,
+  respuestas,
+  enviosWhatsappJobs,
+  enviosWhatsappDetalle,
+} from '@/lib/db/schema'
+import { and, eq, inArray, ne } from 'drizzle-orm'
+import { updateCampanaEstado } from '@/modules/campanas/services/campanas.service'
 import { parseClientesCSV } from '@/lib/utils/csv'
 import { revalidatePath } from 'next/cache'
 import { redirect } from 'next/navigation'
+
+// Errores de validación de negocio que sí queremos mostrarle al usuario tal
+// cual (a diferencia de errores técnicos de Postgres/Drizzle, que no deben
+// filtrarse a la UI — esos quedan solo en el log del servidor).
+class ActionError extends Error {}
 
 async function getRoleOrThrow() {
   const supabase = await createSupabaseServer()
@@ -67,70 +84,69 @@ export async function crearCampanaAction(
     if (rowsCSV.length === 0) return { error: 'El CSV no contiene clientes válidos.' }
   }
 
-  const supabase = createSupabaseAdmin()
+  // Todo el alta (campaña + clientes + encuestas + envíos) corre en una sola
+  // transacción: si cualquier paso falla, Postgres deshace todo — no hace
+  // falta borrar "a mano" lo que ya se había creado, como pasaba con Supabase.
+  let nuevaCampanaId: string
+  try {
+    nuevaCampanaId = await db.transaction(async (tx) => {
+      const [campana] = await tx
+        .insert(campanas)
+        .values({ nombre: result.data.nombre, fecha: result.data.fecha, tipoEncuestaId: result.data.tipo_encuesta_id })
+        .returning({ id: campanas.id })
 
-  // 1. Crear campaña
-  const { data: campana, error: errCampana } = await supabase
-    .from('campanas')
-    .insert({ nombre: result.data.nombre, fecha: result.data.fecha, tipo_encuesta_id: result.data.tipo_encuesta_id })
-    .select()
-    .single()
-  if (errCampana) {
-    console.error('Error al crear la campana', errCampana)
-    return { error: 'Error al crear la campaña.' }
+      let clienteIdsParaEncuesta = [...clienteIdsSeleccionados]
+
+      if (rowsCSV.length > 0) {
+        const clientesNuevos = await tx
+          .insert(clientes)
+          .values(
+            rowsCSV.map((row) => ({
+              nombre: row.nombre,
+              telefono: row.telefono,
+              telefono2: row.telefono_2,
+              telefono3: row.telefono_3,
+              concesionario: row.concesionario,
+              ordenFabricacion: row.orden_fabricacion,
+              tecnologia: row.tecnologia,
+              tipoMaquina: row.tipo_maquina,
+            }))
+          )
+          .returning({ id: clientes.id })
+        clienteIdsParaEncuesta = [...clienteIdsParaEncuesta, ...clientesNuevos.map((c) => c.id)]
+      }
+
+      if (clienteIdsParaEncuesta.length === 0) {
+        throw new ActionError('No hay clientes para agregar a la campaña.')
+      }
+
+      await tx.insert(encuestas).values(
+        clienteIdsParaEncuesta.map((id) => ({ clienteId: id, campanaId: campana.id }))
+      )
+
+      const fechaEnvioInicial = new Date().toISOString()
+      await tx.insert(envios).values(
+        clienteIdsParaEncuesta.map((id) => ({
+          clienteId: id,
+          campanaId: campana.id,
+          numeroRecordatorio: 0,
+          estadoEnvio: 'enviado' as const,
+          fechaEnvio: fechaEnvioInicial,
+        }))
+      )
+
+      return campana.id
+    })
+  } catch (e) {
+    console.error('Error al crear la campaña', e)
+    return { error: e instanceof ActionError ? e.message : 'Error al crear la campaña.' }
   }
 
-  // 2a. Crear clientes desde CSV
-  let clienteIdsParaEncuesta: string[] = [...clienteIdsSeleccionados]
-
-  if (rowsCSV.length > 0) {
-    const { data: clientesNuevos, error: errClientes } = await supabase
-      .from('clientes')
-      .insert(rowsCSV)
-      .select('id')
-    if (errClientes || !clientesNuevos) {
-      console.error('Error al crear los clientes', errClientes)
-      await supabase.from('campanas').delete().eq('id', campana.id)
-      return { error: 'Error al crear los clientes.' }
-    }
-    clienteIdsParaEncuesta = [...clienteIdsParaEncuesta, ...clientesNuevos.map((c) => c.id)]
-  }
-
-  if (clienteIdsParaEncuesta.length === 0) {
-    await supabase.from('campanas').delete().eq('id', campana.id)
-    return { error: 'No hay clientes para agregar a la campaña.' }
-  }
-
-  // 3. Crear encuestas en batch (token lo genera la DB automáticamente)
-  const encuestasInsert = clienteIdsParaEncuesta.map((id) => ({
-    cliente_id: id,
-    campana_id: campana.id,
-  }))
-  const { error: errEncuestas } = await supabase
-    .from('encuestas')
-    .insert(encuestasInsert)
-  if (errEncuestas) {
-    console.error('Error al crear las encuestas', errEncuestas)
-    return { error: 'Error al crear las encuestas.' }
-  }
-
-  // 4. Crear envíos iniciales en batch (1 por cliente)
-  const fechaEnvioInicial = new Date().toISOString()
-  const enviosInsert = clienteIdsParaEncuesta.map((id) => ({
-    cliente_id: id,
-    campana_id: campana.id,
-    numero_recordatorio: 0,
-    estado_envio: 'enviado' as const,
-    fecha_envio: fechaEnvioInicial,
-  }))
-  const { error: errEnvios } = await supabase.from('envios').insert(enviosInsert)
-  if (errEnvios) {
-    console.error('Error al crear los envios', errEnvios)
-    return { error: 'Error al crear los envios.' }
-  }
-
+  // redirect() tiene que ir FUERA de la transacción: internamente funciona
+  // lanzando un error especial, y si estuviera adentro, Drizzle lo
+  // interpretaría como una falla real y haría ROLLBACK de todo lo ya creado.
   revalidatePath('/campanas')
-  redirect(`/campanas/${campana.id}`)
+  redirect(`/campanas/${nuevaCampanaId}`)
 }
 
 export async function cambiarEstadoCampanaAction(
@@ -144,12 +160,11 @@ export async function cambiarEstadoCampanaAction(
 
   if (!parsed.success) return { error: parsed.error.issues[0]?.message ?? 'Datos invalidos.' }
 
-  const supabase = createSupabaseAdmin()
-  const { error } = await supabase
-    .from('campanas')
-    .update({ estado: parsed.data.estado })
-    .eq('id', parsed.data.id)
-  if (error) return { error: 'No se pudo actualizar el estado.' }
+  try {
+    await updateCampanaEstado(parsed.data.id, parsed.data.estado)
+  } catch {
+    return { error: 'No se pudo actualizar el estado.' }
+  }
 
   revalidatePath(`/campanas/${parsed.data.id}`)
   revalidatePath('/campanas')
@@ -166,70 +181,62 @@ export async function eliminarCampanaAction(
 
   if (!parsed.success) return { error: parsed.error.issues[0]?.message ?? 'Campaña inválida.' }
 
-  const supabase = createSupabaseAdmin()
   const campanaId = parsed.data.id
 
-  const { data: encuestas, error: encuestasError } = await supabase
-    .from('encuestas')
-    .select('id, cliente_id')
-    .eq('campana_id', campanaId)
-
-  if (encuestasError) return { error: 'No se pudo preparar la eliminación de la campaña.' }
-
-  const encuestaIds = encuestas?.map((encuesta) => encuesta.id) ?? []
-  const clienteIds = Array.from(
-    new Set((encuestas ?? []).map((encuesta) => encuesta.cliente_id).filter(Boolean))
-  )
-
   let clientesParaEliminar: string[] = []
-  if (clienteIds.length > 0) {
-    const [{ data: encuestasExternas, error: encuestasExternasError }, { data: enviosExternos, error: enviosExternosError }] =
-      await Promise.all([
-        supabase
-          .from('encuestas')
-          .select('cliente_id')
-          .in('cliente_id', clienteIds)
-          .neq('campana_id', campanaId),
-        supabase
-          .from('envios')
-          .select('cliente_id')
-          .in('cliente_id', clienteIds)
-          .neq('campana_id', campanaId),
-      ])
+  try {
+    clientesParaEliminar = await db.transaction(async (tx) => {
+      const encuestasCampana = await tx
+        .select({ id: encuestas.id, clienteId: encuestas.clienteId })
+        .from(encuestas)
+        .where(eq(encuestas.campanaId, campanaId))
 
-    if (encuestasExternasError || enviosExternosError) {
-      return { error: 'No se pudo verificar si los clientes pertenecen a otras campañas.' }
-    }
+      const encuestaIds = encuestasCampana.map((e) => e.id)
+      const clienteIds = Array.from(new Set(encuestasCampana.map((e) => e.clienteId).filter(Boolean)))
 
-    const clientesUsados = new Set([
-      ...(encuestasExternas ?? []).map((item) => item.cliente_id),
-      ...(enviosExternos ?? []).map((item) => item.cliente_id),
-    ])
-    clientesParaEliminar = clienteIds.filter((id) => !clientesUsados.has(id))
+      let clientesSinUso: string[] = []
+      if (clienteIds.length > 0) {
+        const [encuestasExternas, enviosExternos] = await Promise.all([
+          tx
+            .select({ clienteId: encuestas.clienteId })
+            .from(encuestas)
+            .where(and(inArray(encuestas.clienteId, clienteIds), ne(encuestas.campanaId, campanaId))),
+          tx
+            .select({ clienteId: envios.clienteId })
+            .from(envios)
+            .where(and(inArray(envios.clienteId, clienteIds), ne(envios.campanaId, campanaId))),
+        ])
+        const clientesUsados = new Set([
+          ...encuestasExternas.map((e) => e.clienteId),
+          ...enviosExternos.map((e) => e.clienteId),
+        ])
+        clientesSinUso = clienteIds.filter((id) => !clientesUsados.has(id))
+      }
+
+      if (encuestaIds.length > 0) {
+        await tx.delete(respuestas).where(inArray(respuestas.encuestaId, encuestaIds))
+      }
+
+      // cascade borra envios_whatsapp_detalle automáticamente (FK job_id ON DELETE CASCADE)
+      await tx.delete(enviosWhatsappJobs).where(eq(enviosWhatsappJobs.campanaId, campanaId))
+      await tx.delete(envios).where(eq(envios.campanaId, campanaId))
+      await tx.delete(encuestas).where(eq(encuestas.campanaId, campanaId))
+      await tx.delete(campanas).where(eq(campanas.id, campanaId))
+
+      return clientesSinUso
+    })
+  } catch (e) {
+    console.error('Error al eliminar la campaña', e)
+    return { error: 'No se pudo eliminar la campaña.' }
   }
 
-  if (encuestaIds.length > 0) {
-    const { error } = await supabase.from('respuestas').delete().in('encuesta_id', encuestaIds)
-    if (error) return { error: 'No se pudieron eliminar las respuestas asociadas.' }
-  }
-
-  // Eliminar jobs de WhatsApp (cascade borra envios_whatsapp_detalle automáticamente)
-  const { error: waJobsError } = await supabase.from('envios_whatsapp_jobs').delete().eq('campana_id', campanaId)
-  if (waJobsError) return { error: 'No se pudieron eliminar los envíos de WhatsApp asociados.' }
-
-  const { error: enviosError } = await supabase.from('envios').delete().eq('campana_id', campanaId)
-  if (enviosError) return { error: 'No se pudieron eliminar los envíos asociados.' }
-
-  const { error: encuestasDeleteError } = await supabase.from('encuestas').delete().eq('campana_id', campanaId)
-  if (encuestasDeleteError) return { error: 'No se pudieron eliminar las encuestas asociadas.' }
-
-  const { error: campanaError } = await supabase.from('campanas').delete().eq('id', campanaId)
-  if (campanaError) return { error: 'No se pudo eliminar la campaña.' }
-
+  // Limpieza de clientes sin uso: best-effort, fuera de la transacción a
+  // propósito — la campaña ya se borró bien, esto no debe hacerla fallar.
   if (clientesParaEliminar.length > 0) {
-    const { error } = await supabase.from('clientes').delete().in('id', clientesParaEliminar)
-    if (error) {
-      console.error('La campaña fue eliminada, pero no se pudieron limpiar clientes sin referencias.', error)
+    try {
+      await db.delete(clientes).where(inArray(clientes.id, clientesParaEliminar))
+    } catch (e) {
+      console.error('La campaña fue eliminada, pero no se pudieron limpiar clientes sin referencias.', e)
     }
   }
 
@@ -254,43 +261,34 @@ export async function eliminarEncuestaAction(
   })
   if (!parsed.success) return { error: parsed.error.issues[0]?.message ?? 'Encuesta inválida.' }
 
-  const supabase = createSupabaseAdmin()
   const encuestaId = parsed.data.encuesta_id
 
-  const { data: encuesta, error: encuestaError } = await supabase
-    .from('encuestas')
-    .select('id, cliente_id, campana_id')
-    .eq('id', encuestaId)
-    .single()
+  let campanaId: string
+  try {
+    campanaId = await db.transaction(async (tx) => {
+      const [encuesta] = await tx
+        .select({ id: encuestas.id, clienteId: encuestas.clienteId, campanaId: encuestas.campanaId })
+        .from(encuestas)
+        .where(eq(encuestas.id, encuestaId))
+        .limit(1)
 
-  if (encuestaError || !encuesta) return { error: 'La encuesta no existe.' }
+      if (!encuesta) throw new ActionError('La encuesta no existe.')
 
-  const { error: waDetalleError } = await supabase
-    .from('envios_whatsapp_detalle')
-    .delete()
-    .eq('encuesta_id', encuestaId)
-  if (waDetalleError) return { error: 'No se pudieron eliminar los envíos de WhatsApp asociados.' }
+      await tx.delete(enviosWhatsappDetalle).where(eq(enviosWhatsappDetalle.encuestaId, encuestaId))
+      await tx.delete(respuestas).where(eq(respuestas.encuestaId, encuestaId))
+      await tx
+        .delete(envios)
+        .where(and(eq(envios.clienteId, encuesta.clienteId), eq(envios.campanaId, encuesta.campanaId)))
+      await tx.delete(encuestas).where(eq(encuestas.id, encuestaId))
 
-  const { error: respuestaError } = await supabase
-    .from('respuestas')
-    .delete()
-    .eq('encuesta_id', encuestaId)
-  if (respuestaError) return { error: 'No se pudo eliminar la respuesta asociada.' }
+      return encuesta.campanaId
+    })
+  } catch (e) {
+    console.error('Error al eliminar la encuesta', e)
+    return { error: e instanceof ActionError ? e.message : 'No se pudo eliminar la encuesta.' }
+  }
 
-  const { error: enviosError } = await supabase
-    .from('envios')
-    .delete()
-    .eq('cliente_id', encuesta.cliente_id)
-    .eq('campana_id', encuesta.campana_id)
-  if (enviosError) return { error: 'No se pudieron eliminar los envíos asociados.' }
-
-  const { error: encuestaDeleteError } = await supabase
-    .from('encuestas')
-    .delete()
-    .eq('id', encuestaId)
-  if (encuestaDeleteError) return { error: 'No se pudo eliminar la encuesta.' }
-
-  revalidatePath(`/campanas/${encuesta.campana_id}`)
+  revalidatePath(`/campanas/${campanaId}`)
   revalidatePath('/campanas')
   revalidatePath('/respuestas')
   revalidatePath('/nps')
