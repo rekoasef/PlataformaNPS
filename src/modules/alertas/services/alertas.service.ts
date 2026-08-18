@@ -1,4 +1,6 @@
-import { createSupabaseAdmin } from '@/lib/supabase/server'
+import { db } from '@/lib/db/client'
+import { campanas, clientes, encuestas, systemConfig } from '@/lib/db/schema'
+import { eq } from 'drizzle-orm'
 import { sendEmail } from '@/lib/email/send-email'
 import { buildAlertaNpsTemplate } from '@/lib/email/templates/alerta-nps'
 import { buildRamblaRegaloTemplate } from '@/lib/email/templates/rambla-regalo'
@@ -24,35 +26,29 @@ export async function enviarAlertaNpsCritico({
   comentarioEmpresa,
   comentarioGeneral,
 }: RespuestaCriticaData) {
-  const supabase = createSupabaseAdmin()
+  const [[config], [encuesta]] = await Promise.all([
+    db.select({ emailsNotificacion: systemConfig.emailsNotificacion }).from(systemConfig).limit(1),
+    db
+      .select({
+        id: encuestas.id,
+        campanaNombre: campanas.nombre,
+        clienteNombre: clientes.nombre,
+        clienteConcesionario: clientes.concesionario,
+      })
+      .from(encuestas)
+      .innerJoin(campanas, eq(encuestas.campanaId, campanas.id))
+      .innerJoin(clientes, eq(encuestas.clienteId, clientes.id))
+      .where(eq(encuestas.id, encuestaId))
+      .limit(1),
+  ])
 
-  const [{ data: config, error: configError }, { data: encuesta, error: encuestaError }] =
-    await Promise.all([
-      supabase.from('system_config').select('emails_notificacion').limit(1).maybeSingle(),
-      supabase
-        .from('encuestas')
-        .select(`
-          id,
-          campanas(id, nombre),
-          clientes(nombre, concesionario)
-        `)
-        .eq('id', encuestaId)
-        .single(),
-    ])
-
-  if (configError) throw configError
-  if (encuestaError) throw encuestaError
-
-  const recipients = config?.emails_notificacion ?? []
+  const recipients = config?.emailsNotificacion ?? []
   if (recipients.length === 0) return
 
-  const campana = Array.isArray(encuesta.campanas) ? encuesta.campanas[0] : encuesta.campanas
-  const cliente = Array.isArray(encuesta.clientes) ? encuesta.clientes[0] : encuesta.clientes
-
   const email = buildAlertaNpsTemplate({
-    clienteNombre: cliente?.nombre ?? 'Cliente sin nombre',
-    concesionario: cliente?.concesionario ?? 'Sin concesionario',
-    campanaNombre: campana?.nombre ?? 'Campaña sin nombre',
+    clienteNombre: encuesta?.clienteNombre ?? 'Cliente sin nombre',
+    concesionario: encuesta?.clienteConcesionario ?? 'Sin concesionario',
+    campanaNombre: encuesta?.campanaNombre ?? 'Campaña sin nombre',
     npsProducto,
     npsEmpresa,
     npsConcesionario,
@@ -84,17 +80,9 @@ type DatosEnvioRambla = {
 }
 
 export async function enviarNotificacionRambla(datos: DatosEnvioRambla) {
-  const supabase = createSupabaseAdmin()
+  const [config] = await db.select({ emailsRambla: systemConfig.emailsRambla }).from(systemConfig).limit(1)
 
-  const { data: config, error } = await supabase
-    .from('system_config')
-    .select('emails_rambla')
-    .limit(1)
-    .maybeSingle()
-
-  if (error) throw error
-
-  const recipients: string[] = config?.emails_rambla ?? []
+  const recipients = config?.emailsRambla ?? []
   if (recipients.length === 0) return
 
   const emailContent = buildRamblaRegaloTemplate(datos)
