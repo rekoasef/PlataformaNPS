@@ -1,8 +1,7 @@
 'use server'
 
 import { z } from 'zod'
-import { createCliente } from '@/modules/clientes/services/clientes.service'
-import { createSupabaseServer } from '@/lib/supabase/server'
+import { createCliente, createClientesBulk } from '@/modules/clientes/services/clientes.service'
 import { parseClientesCSV } from '@/lib/utils/csv'
 import { revalidatePath } from 'next/cache'
 
@@ -61,9 +60,11 @@ export async function importarClientesCSVAction(
 
   if (rows.length === 0) return { error: 'El archivo no contiene filas validas.' }
 
-  const supabase = await createSupabaseServer()
-  const { error } = await supabase.from('clientes').insert(rows)
-  if (error) return { error: 'Error al guardar los clientes. Verifica el formato del archivo.' }
+  try {
+    await createClientesBulk(rows)
+  } catch {
+    return { error: 'Error al guardar los clientes. Verifica el formato del archivo.' }
+  }
 
   revalidatePath('/clientes')
   return { success: true, imported: rows.length }
