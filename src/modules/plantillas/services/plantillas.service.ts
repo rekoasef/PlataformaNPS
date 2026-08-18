@@ -1,44 +1,49 @@
-import { createSupabaseAdmin } from '@/lib/supabase/server'
+import { db } from '@/lib/db/client'
+import { tiposEncuesta } from '@/lib/db/schema'
+import { eq } from 'drizzle-orm'
 import type { Plantilla, Pregunta } from '../types/plantilla.types'
-
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-type AnyClient = any
 
 const SLUGS_SISTEMA = ['inicio_garantia']
 
-function rowToPlantilla(row: Record<string, unknown>): Plantilla {
+const plantillaSelect = {
+  id: tiposEncuesta.id,
+  nombre: tiposEncuesta.nombre,
+  slug: tiposEncuesta.slug,
+  activo: tiposEncuesta.activo,
+  introduccion: tiposEncuesta.introduccion,
+  preguntas: tiposEncuesta.preguntas,
+  created_at: tiposEncuesta.createdAt,
+}
+
+function rowToPlantilla(row: {
+  id: string
+  nombre: string
+  slug: string
+  activo: boolean
+  introduccion: string | null
+  preguntas: unknown
+  created_at: string
+}): Plantilla {
   return {
-    id:           row.id as string,
-    nombre:       row.nombre as string,
-    slug:         row.slug as string,
-    activo:       row.activo as boolean,
-    introduccion: (row.introduccion as string | null) ?? '',
-    preguntas:    (row.preguntas as Pregunta[] | null) ?? [],
-    created_at:   row.created_at as string,
-    es_sistema:   SLUGS_SISTEMA.includes(row.slug as string),
+    id: row.id,
+    nombre: row.nombre,
+    slug: row.slug,
+    activo: row.activo,
+    introduccion: row.introduccion ?? '',
+    preguntas: (row.preguntas as Pregunta[] | null) ?? [],
+    created_at: row.created_at,
+    es_sistema: SLUGS_SISTEMA.includes(row.slug),
   }
 }
 
 export async function getPlantillas(): Promise<Plantilla[]> {
-  const supabase = createSupabaseAdmin() as AnyClient
-  const { data, error } = await supabase
-    .from('tipos_encuesta')
-    .select('*')
-    .eq('activo', true)
-    .order('created_at')
-  if (error) throw error
-  return (data ?? []).map(rowToPlantilla)
+  const rows = await db.select(plantillaSelect).from(tiposEncuesta).where(eq(tiposEncuesta.activo, true)).orderBy(tiposEncuesta.createdAt)
+  return rows.map(rowToPlantilla)
 }
 
 export async function getPlantillaById(id: string): Promise<Plantilla | null> {
-  const supabase = createSupabaseAdmin() as AnyClient
-  const { data, error } = await supabase
-    .from('tipos_encuesta')
-    .select('*')
-    .eq('id', id)
-    .single()
-  if (error) return null
-  return rowToPlantilla(data)
+  const [row] = await db.select(plantillaSelect).from(tiposEncuesta).where(eq(tiposEncuesta.id, id)).limit(1)
+  return row ? rowToPlantilla(row) : null
 }
 
 export async function createPlantilla(input: {
@@ -46,7 +51,6 @@ export async function createPlantilla(input: {
   introduccion: string
   preguntas: Pregunta[]
 }): Promise<Plantilla> {
-  const supabase = createSupabaseAdmin() as AnyClient
   const slug = input.nombre
     .toLowerCase()
     .normalize('NFD')
@@ -54,64 +58,48 @@ export async function createPlantilla(input: {
     .replace(/[^a-z0-9]+/g, '_')
     .replace(/^_|_$/g, '')
 
-  const { data, error } = await supabase
-    .from('tipos_encuesta')
-    .insert({
-      nombre:       input.nombre,
+  const [row] = await db
+    .insert(tiposEncuesta)
+    .values({
+      nombre: input.nombre,
       slug,
-      activo:       true,
+      activo: true,
       introduccion: input.introduccion,
-      preguntas:    input.preguntas,
+      preguntas: input.preguntas,
     })
-    .select()
-    .single()
-  if (error) throw error
-  return rowToPlantilla(data)
+    .returning(plantillaSelect)
+  return rowToPlantilla(row)
 }
 
 export async function updatePlantilla(
   id: string,
-  input: { nombre: string; introduccion: string; preguntas: Pregunta[] },
+  input: { nombre: string; introduccion: string; preguntas: Pregunta[] }
 ): Promise<void> {
-  const supabase = createSupabaseAdmin() as AnyClient
-  const { error } = await supabase
-    .from('tipos_encuesta')
-    .update({
-      nombre:       input.nombre,
-      introduccion: input.introduccion,
-      preguntas:    input.preguntas,
-    })
-    .eq('id', id)
-  if (error) throw error
+  await db
+    .update(tiposEncuesta)
+    .set({ nombre: input.nombre, introduccion: input.introduccion, preguntas: input.preguntas })
+    .where(eq(tiposEncuesta.id, id))
 }
 
 export async function deletePlantilla(id: string): Promise<void> {
-  const supabase = createSupabaseAdmin() as AnyClient
-  const { error } = await supabase
-    .from('tipos_encuesta')
-    .update({ activo: false })
-    .eq('id', id)
-  if (error) throw error
+  await db.update(tiposEncuesta).set({ activo: false }).where(eq(tiposEncuesta.id, id))
 }
 
 // Legacy — used by campanas service
 export async function getTiposEncuesta() {
-  const supabase = createSupabaseAdmin() as AnyClient
-  const { data } = await supabase
-    .from('tipos_encuesta')
-    .select('id, nombre, slug')
-    .eq('activo', true)
-    .order('created_at')
-  return data ?? []
+  return db
+    .select({ id: tiposEncuesta.id, nombre: tiposEncuesta.nombre, slug: tiposEncuesta.slug })
+    .from(tiposEncuesta)
+    .where(eq(tiposEncuesta.activo, true))
+    .orderBy(tiposEncuesta.createdAt)
 }
 
 // Legacy — used by encuesta/page.tsx
 export async function getConfigFinGarantia() {
-  const supabase = createSupabaseAdmin() as AnyClient
-  const { data } = await supabase
-    .from('tipos_encuesta')
-    .select('introduccion, preguntas')
-    .eq('slug', 'fin_garantia')
-    .single()
-  return data ?? null
+  const [row] = await db
+    .select({ introduccion: tiposEncuesta.introduccion, preguntas: tiposEncuesta.preguntas })
+    .from(tiposEncuesta)
+    .where(eq(tiposEncuesta.slug, 'fin_garantia'))
+    .limit(1)
+  return row ?? null
 }
