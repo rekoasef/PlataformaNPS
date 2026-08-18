@@ -35,7 +35,7 @@ export async function getClientes(search?: string, page = 1) {
 
   const [data, countResult] = await Promise.all([
     db.select(clienteSelect).from(clientes).where(where).orderBy(asc(clientes.nombre)).limit(PAGE_SIZE).offset(from),
-    db.select({ total: sql<number>`count(*)` }).from(clientes).where(where),
+    db.select({ total: sql<number>`count(*)::int` }).from(clientes).where(where),
   ])
 
   return { data, count: countResult[0].total, pageSize: PAGE_SIZE }
