@@ -43,7 +43,7 @@ Todo el desarrollo de la migración se hace **en paralelo a producción, sin toc
 - [x] Subir `docker-compose.staging.yml` + `.env.staging` a la VPS y levantar el contenedor de staging — `npsplatform_postgres_staging` corriendo (`postgres:16`, `Up (healthy)`, `127.0.0.1:5433->5432`, sin exponer a internet).
 - [x] Aplicar `supabase/migrations/*.sql` contra el Postgres de staging — las 13 tablas del schema quedaron creadas y verificadas. Se aplicó una versión filtrada (`migrations-selfhosted-staging/combined_selfhosted.sql`, generado localmente, no versionado en git) que omite a propósito: extensión/jobs de `pg_cron`, `CREATE POLICY`/`ENABLE ROW LEVEL SECURITY` (roles `authenticated`/`anon`/`service_role` no existen sin Supabase), y dos foreign keys a `auth.users(id)` (columnas `encuestas.marcado_sin_respuesta_por` y `encuesta_medidas.created_by`, que quedaron como `UUID` sin constraint hasta que se defina el nuevo sistema de Auth).
 - [x] Migrar datos reales desde Supabase (`pg_dump` → `pg_restore`) al ambiente de staging — las 13 tablas migradas y verificadas (conteos + checksum de contenido idénticos entre origen y destino).
-- [ ] Elegir ORM/data-access layer (propuesta: Drizzle, por ser SQL-first y no competir con las migraciones ya existentes).
+- [x] Elegir ORM/data-access layer: **Drizzle**, decidido y configurado (ver sección 9).
 - [ ] Migrar `services/*.ts` módulo por módulo, reemplazando `supabase.from(...)` por queries propias.
 - [ ] Definir y evaluar Auth (NextAuth vs Better Auth).
 - [ ] Reemplazar los 2 jobs de `pg_cron` por endpoints + cron de sistema.
@@ -82,8 +82,7 @@ Todo el desarrollo de la migración se hace **en paralelo a producción, sin toc
 
 ## 7. Próximos pasos inmediatos
 
-1. Elegir ORM/data-access layer (Drizzle es la propuesta, sin decidir formalmente todavía).
-2. Empezar a migrar `services/*.ts` módulo por módulo.
+1. Empezar a migrar `services/*.ts` módulo por módulo, reemplazando `supabase.from(...)` por Drizzle.
 
 ## 8. Migración de datos reales a staging (2026-08-18)
 
@@ -105,6 +104,19 @@ Es el mismo patrón de raíz que ya había causado el bug arreglado por `2026072
 `db.<project-ref>.supabase.co:5432` (conexión directa) solo resuelve a una IP IPv6, y la red de desarrollo no tenía salida IPv6 → `pg_dump` fallaba con "Network is unreachable". Solución: usar el **Session Pooler** de Supabase (Dashboard → Connect → "Session pooler"), que sí soporta IPv4. Importante usar el pooler en modo **sesión** (puerto 5432), no modo **transacción** (puerto 6543/PgBouncer) — este último no soporta las funciones que `pg_dump`/`pg_restore` necesitan.
 
 - [x] Escribir migración formal para las 11 columnas del drift: `20260818000000_fix_missing_garantia_urgencia_columns.sql` (con `ADD COLUMN IF NOT EXISTS`, idempotente). Probada contra staging y aplicada contra producción (Supabase Cloud) vía `psql` directo — no-op esperado en ambas (las columnas ya existían), queda documentada en el repo de ahora en más.
+
+## 9. ORM: Drizzle (2026-08-18)
+
+Se eligió **Drizzle** como data-access layer (en vez de Prisma o queries crudas) — es SQL-first (las queries se parecen a SQL real, sin lenguaje de schema propio como Prisma), liviano (sin motor/proceso aparte), y convive bien con que el schema ya se define en SQL puro a mano en `supabase/migrations/`. No reemplaza esas migraciones: `supabase/migrations/*.sql` sigue siendo la fuente de verdad del schema; Drizzle solo agrega una capa de queries tipadas en TypeScript por encima de la misma base.
+
+**Setup:**
+- `drizzle-orm` + driver `postgres` (postgres.js) como dependencias de producción; `drizzle-kit` + `dotenv` como dev dependencies (herramientas de CLI, no corren en producción).
+- `drizzle.config.ts` en la raíz: config que usa `drizzle-kit` para tareas de CLI (lee `.env.staging` vía el túnel SSH a staging).
+- `src/lib/db/schema.ts` y `src/lib/db/relations.ts`: generados por **introspección** (`npx drizzle-kit pull`), leyendo el schema real de staging — no se escribieron a mano. Para regenerarlos después de un cambio de schema, correr `npx drizzle-kit pull` de nuevo (requiere el túnel SSH a staging levantado).
+- `src/lib/db/client.ts`: exporta `db`, el objeto que el resto de la app va a importar para hacer queries (reemplaza `supabase.from(...)`). Lee la conexión de la variable de entorno `DATABASE_URL`.
+- `DATABASE_URL` en `.env.local` (gitignoreado): hoy apunta al túnel SSH hacia staging (`127.0.0.1:5433`) para desarrollo local. Cuando haya un ambiente self-hosted real corriendo la app, va a apuntar directo al Postgres de esa VPS (misma red Docker, sin túnel).
+
+Probado end-to-end con una query de conteo contra staging — coincide con el dato real.
 
 ### Pendiente
 
