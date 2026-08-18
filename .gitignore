@@ -41,3 +41,6 @@ yarn-error.log*
 *.tsbuildinfo
 next-env.d.ts
 .env.local
+
+# artefacto de trabajo local de la migración self-hosted (ver docs/06-migracion-self-hosted.md)
+migrations-selfhosted-staging/

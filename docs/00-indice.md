@@ -36,6 +36,11 @@ Este directorio contiene la documentación vigente del proyecto.
   - modelo de datos vigente
   - deudas técnicas y próximos pasos
 
+- [06-migracion-self-hosted.md](./06-migracion-self-hosted.md)
+  - migración de Supabase Cloud a infraestructura propia
+  - estado actual, decisiones tomadas y próximos pasos
+  - documento vivo, se actualiza a medida que avanza la migración
+
 ## Orden recomendado de lectura
 
 1. `01-documentacion-proyecto.md`
@@ -43,3 +48,4 @@ Este directorio contiene la documentación vigente del proyecto.
 3. `03-base-de-datos.md`
 4. `04-seguridad.md`
 5. `05-estado-actual-desarrollo.md`
+6. `06-migracion-self-hosted.md` (si estás trabajando en la migración)
