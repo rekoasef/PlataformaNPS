@@ -82,7 +82,30 @@ Todo el desarrollo de la migración se hace **en paralelo a producción, sin toc
 
 ## 7. Próximos pasos inmediatos
 
-1. Empezar a migrar `services/*.ts` módulo por módulo, reemplazando `supabase.from(...)` por Drizzle.
+1. Seguir migrando `services/*.ts` módulo por módulo (ver progreso en sección 10).
+
+## 10. Progreso de migración de módulos a Drizzle
+
+Patrón seguido en cada módulo: el `service.ts` cambia de motor por dentro (Supabase → Drizzle) pero mantiene el mismo contrato de datos hacia afuera (mismos nombres de campo snake_case, mismas firmas de función) — así los componentes/tipos del módulo no necesitan tocarse. Probado contra datos reales de staging antes de cada commit.
+
+- [x] `clientes` — `getClientes`, `getClienteById`, `createCliente`, `getClientesByCampana`. También se migró el insert de importación CSV que vivía suelto en `actions.ts` (ahora `createClientesBulk` en el service).
+- [x] `notificaciones` — `getNotificaciones`, `getUnreadCount`, `marcarTodasLeidas`. La autenticación de `marcarTodasLeidasAction` (`supabase.auth.getUser()`) queda en Supabase Auth por ahora — es una fase aparte, todavía sin decidir/migrar.
+- [ ] `campanas`
+- [ ] `recordatorios` (`avisos.service.ts`, `recordatorios.service.ts`, `workflow.service.ts`)
+- [ ] `alertas`
+- [ ] `configuracion` (ojo: `usuarios.service.ts` probablemente depende de Supabase Auth admin API — no migrable hasta decidir el reemplazo de Auth)
+- [ ] `plantillas`
+- [ ] `rambla`
+- [ ] `whatsapp`
+- [ ] `dashboard` (738 líneas, el más grande — muchas agregaciones/conteos, prestar atención al gotcha de `count(*)` de abajo)
+
+**Puntos sueltos de Supabase fuera de `modules/*/services/`** que van a necesitar migrarse en algún momento (no son parte de ningún módulo, viven en rutas de la app): `src/app/encuesta/actions.ts` y `src/app/encuesta/actions-fin-garantia.ts` (el formulario público de encuesta, inserta en `notificaciones` directo) y `src/modules/recordatorios/services/avisos.service.ts` (también inserta en `notificaciones` sin pasar por el service de ese módulo).
+
+### Gotcha: `count(*)` con Drizzle devuelve string, no number
+
+`sql<number>\`count(*)\`` compila bien pero en runtime el valor es un **string** (`"93"`, no `93`) — Postgres devuelve `count(*)` como `bigint`, y el driver lo entrega como string en JS para no perder precisión con números grandes. `sql<number>` es solo una anotación de tipo para TypeScript, no convierte el valor real. Se detectó con un test que comparaba `=== 0` y fallaba silenciosamente.
+
+**Solución:** castear a entero en el propio SQL, `sql<number>\`count(*)::int\``, no en JS después — con `::int` el driver sí devuelve un `number` real. Aplica a cualquier agregado (`count`, `sum`, etc.) que dependa de `bigint` en Postgres. Especialmente relevante para cuando se migre `dashboard.service.ts`.
 
 ## 8. Migración de datos reales a staging (2026-08-18)
 
