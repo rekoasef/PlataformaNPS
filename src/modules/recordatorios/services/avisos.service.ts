@@ -1,87 +1,87 @@
-import { createSupabaseAdmin } from '@/lib/supabase/server'
+import { db } from '@/lib/db/client'
+import { campanas, encuestas, envios, notificaciones, systemConfig } from '@/lib/db/schema'
+import { and, desc, eq, gte, inArray, sql } from 'drizzle-orm'
 import { sendEmail } from '@/lib/email/send-email'
 import { buildAvisoRecordatorioTemplate } from '@/lib/email/templates/aviso-recordatorio'
 
 const DAY_MS = 1000 * 60 * 60 * 24
 
 export async function checkAvisosRecordatorio() {
-  const supabase = createSupabaseAdmin()
+  const [config] = await db
+    .select({ diasNotificacionInicial: systemConfig.diasNotificacionInicial })
+    .from(systemConfig)
+    .limit(1)
 
-  const [{ data: config }, { data: campanas }] = await Promise.all([
-    supabase
-      .from('system_config')
-      .select('dias_notificacion_inicial, emails_notificacion')
-      .limit(1)
-      .maybeSingle(),
-    supabase
-      .from('campanas')
-      .select('id, nombre')
-      .eq('estado', 'activa'),
-  ])
+  const campanasActivas = await db
+    .select({ id: campanas.id, nombre: campanas.nombre })
+    .from(campanas)
+    .where(eq(campanas.estado, 'activa'))
 
-  if (!config || !campanas || campanas.length === 0) return
+  if (!config || campanasActivas.length === 0) return
 
   const todayStart = new Date()
   todayStart.setHours(0, 0, 0, 0)
   const now = Date.now()
   const appUrl = process.env.NEXT_PUBLIC_APP_URL ?? 'http://localhost:3000'
 
-  for (const campana of campanas) {
+  for (const campana of campanasActivas) {
     try {
-      const { data: envios } = await supabase
-        .from('envios')
-        .select('numero_recordatorio, estado_envio, fecha_envio')
-        .eq('campana_id', campana.id)
-        .order('numero_recordatorio', { ascending: false })
+      const enviosCampana = await db
+        .select({ numeroRecordatorio: envios.numeroRecordatorio, estadoEnvio: envios.estadoEnvio, fechaEnvio: envios.fechaEnvio })
+        .from(envios)
+        .where(eq(envios.campanaId, campana.id))
+        .orderBy(desc(envios.numeroRecordatorio))
 
-      if (!envios || envios.length === 0) continue
+      if (enviosCampana.length === 0) continue
 
       // Si hay un recordatorio sin confirmar (pendiente de envío externo), saltar
-      const tieneRecordatorioPendiente = envios.some(
-        (e) => e.numero_recordatorio > 0 && e.estado_envio === 'pendiente_envio'
+      const tieneRecordatorioPendiente = enviosCampana.some(
+        (e) => e.numeroRecordatorio > 0 && e.estadoEnvio === 'pendiente_envio'
       )
       if (tieneRecordatorioPendiente) continue
 
       // Último recordatorio confirmado (enviado)
-      const ultimoConfirmado = envios.find((e) => e.estado_envio === 'enviado')
-      if (!ultimoConfirmado || !ultimoConfirmado.fecha_envio) continue
+      const ultimoConfirmado = enviosCampana.find((e) => e.estadoEnvio === 'enviado')
+      if (!ultimoConfirmado || !ultimoConfirmado.fechaEnvio) continue
 
       // Máximo de recordatorios ya alcanzado
-      if (ultimoConfirmado.numero_recordatorio >= 3) continue
+      if (ultimoConfirmado.numeroRecordatorio >= 3) continue
 
       // ¿Pasaron suficientes días desde el último envío confirmado?
-      const diasTranscurridos =
-        (now - new Date(ultimoConfirmado.fecha_envio).getTime()) / DAY_MS
-      if (diasTranscurridos < config.dias_notificacion_inicial) continue
+      const diasTranscurridos = (now - new Date(ultimoConfirmado.fechaEnvio).getTime()) / DAY_MS
+      if (diasTranscurridos < config.diasNotificacionInicial) continue
 
       // ¿Hay clientes pendientes de responder?
-      const { count: pendientes } = await supabase
-        .from('encuestas')
-        .select('id', { count: 'exact', head: true })
-        .eq('campana_id', campana.id)
-        .in('estado', ['pendiente', 'recordatorio_enviado'])
+      const [{ pendientes }] = await db
+        .select({ pendientes: sql<number>`count(*)::int` })
+        .from(encuestas)
+        .where(and(eq(encuestas.campanaId, campana.id), inArray(encuestas.estado, ['pendiente', 'recordatorio_enviado'])))
 
-      if (!pendientes || pendientes === 0) continue
+      if (pendientes === 0) continue
 
       // Deduplicación: ya notificamos hoy para esta campaña?
-      const { count: notifHoy } = await supabase
-        .from('notificaciones')
-        .select('id', { count: 'exact', head: true })
-        .eq('tipo', 'campana_sin_actividad')
-        .gte('created_at', todayStart.toISOString())
-        .filter('metadata->>campana_id', 'eq', campana.id)
+      const [{ notifHoy }] = await db
+        .select({ notifHoy: sql<number>`count(*)::int` })
+        .from(notificaciones)
+        .where(
+          and(
+            eq(notificaciones.tipo, 'campana_sin_actividad'),
+            gte(notificaciones.createdAt, todayStart.toISOString()),
+            sql`${notificaciones.metadata}->>'campana_id' = ${campana.id}`
+          )
+        )
 
-      if (notifHoy && notifHoy > 0) continue
+      if (notifHoy > 0) continue
 
-      const nextNumero = ultimoConfirmado.numero_recordatorio + 1
+      const nextNumero = ultimoConfirmado.numeroRecordatorio + 1
       const mensaje = `Campaña "${campana.nombre}" tiene ${pendientes} cliente${pendientes !== 1 ? 's' : ''} sin responder. Es momento de enviar el recordatorio ${nextNumero}.`
 
       // Notificación interna
-      await supabase.from('notificaciones').insert({
+      await db.insert(notificaciones).values({
         tipo: 'campana_sin_actividad',
         titulo: `Recordatorio ${nextNumero} pendiente`,
         mensaje,
-        para_rol: 'admin',
+        paraRol: 'admin',
         metadata: {
           campana_id: campana.id,
           campana_nombre: campana.nombre,

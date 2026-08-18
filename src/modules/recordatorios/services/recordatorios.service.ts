@@ -1,4 +1,6 @@
-import { createSupabaseServer } from '@/lib/supabase/server'
+import { db } from '@/lib/db/client'
+import { campanas, clientes, encuestaMedidas, encuestas, envios, tiposEncuesta } from '@/lib/db/schema'
+import { and, asc, desc, eq, inArray, sql } from 'drizzle-orm'
 import type {
   ClientePendienteRecordatorio,
   EncuestaMedida,
@@ -9,41 +11,51 @@ import type {
 } from '../types/recordatorio.types'
 import { syncWorkflowEstados } from './workflow.service'
 
-function mapMedidas(
-  raw:
-    | {
-        id: string
-        comentario: string
-        created_at: string
-        created_by: string | null
-        updated_at: string
-      }[]
-    | null
-    | undefined
-): EncuestaMedida[] {
-  return (raw ?? []).map((medida) => ({
-    id: medida.id,
-    comentario: medida.comentario,
-    createdAt: medida.created_at,
-    createdBy: medida.created_by,
-    updatedAt: medida.updated_at,
-  }))
+function mapMedida(m: { id: string; comentario: string; createdAt: string; createdBy: string | null; updatedAt: string }): EncuestaMedida {
+  return { id: m.id, comentario: m.comentario, createdAt: m.createdAt, createdBy: m.createdBy, updatedAt: m.updatedAt }
+}
+
+async function getMedidasByEncuestaIds(encuestaIds: string[]): Promise<Map<string, EncuestaMedida[]>> {
+  const map = new Map<string, EncuestaMedida[]>()
+  if (encuestaIds.length === 0) return map
+
+  const rows = await db
+    .select({
+      encuestaId: encuestaMedidas.encuestaId,
+      id: encuestaMedidas.id,
+      comentario: encuestaMedidas.comentario,
+      createdAt: encuestaMedidas.createdAt,
+      createdBy: encuestaMedidas.createdBy,
+      updatedAt: encuestaMedidas.updatedAt,
+    })
+    .from(encuestaMedidas)
+    .where(inArray(encuestaMedidas.encuestaId, encuestaIds))
+    .orderBy(asc(encuestaMedidas.createdAt))
+
+  for (const row of rows) {
+    const list = map.get(row.encuestaId) ?? []
+    list.push(mapMedida(row))
+    map.set(row.encuestaId, list)
+  }
+  return map
 }
 
 export async function getRecordatoriosByCampana(campanaId: string): Promise<RecordatorioResumen[]> {
   await syncWorkflowEstados()
-  const supabase = await createSupabaseServer()
-  const { data, error } = await supabase
-    .from('envios')
-    .select('numero_recordatorio, estado_envio, fecha_envio')
-    .eq('campana_id', campanaId)
-    .order('numero_recordatorio', { ascending: true })
 
-  if (error) throw error
+  const data = await db
+    .select({
+      numero_recordatorio: envios.numeroRecordatorio,
+      estado_envio: envios.estadoEnvio,
+      fecha_envio: envios.fechaEnvio,
+    })
+    .from(envios)
+    .where(eq(envios.campanaId, campanaId))
+    .orderBy(asc(envios.numeroRecordatorio))
 
   const resumenMap = new Map<number, RecordatorioResumen>()
 
-  for (const envio of data ?? []) {
+  for (const envio of data) {
     const actual = resumenMap.get(envio.numero_recordatorio)
 
     if (!actual) {
@@ -66,30 +78,31 @@ export async function getRecordatoriosByCampana(campanaId: string): Promise<Reco
     }
   }
 
-  return Array.from(resumenMap.values()).sort(
-    (a, b) => a.numero_recordatorio - b.numero_recordatorio
-  )
+  return Array.from(resumenMap.values()).sort((a, b) => a.numero_recordatorio - b.numero_recordatorio)
 }
 
-export async function getClientesPendientes(
-  campanaId: string
-): Promise<ClientePendienteRecordatorio[]> {
+export async function getClientesPendientes(campanaId: string): Promise<ClientePendienteRecordatorio[]> {
   await syncWorkflowEstados()
-  const supabase = await createSupabaseServer()
-  const { data, error } = await supabase
-    .from('encuestas')
-    .select(`
-      id,
-      token,
-      estado,
-      clientes(id, nombre, telefono, telefono_2, telefono_3, concesionario, orden_fabricacion)
-    `)
-    .eq('campana_id', campanaId)
-    .eq('estado', 'pendiente')
-    .order('created_at')
 
-  if (error) throw error
-  return data
+  return db
+    .select({
+      id: encuestas.id,
+      token: encuestas.token,
+      estado: encuestas.estado,
+      clientes: {
+        id: clientes.id,
+        nombre: clientes.nombre,
+        telefono: clientes.telefono,
+        telefono_2: clientes.telefono2,
+        telefono_3: clientes.telefono3,
+        concesionario: clientes.concesionario,
+        orden_fabricacion: clientes.ordenFabricacion,
+      },
+    })
+    .from(encuestas)
+    .innerJoin(clientes, eq(encuestas.clienteId, clientes.id))
+    .where(and(eq(encuestas.campanaId, campanaId), eq(encuestas.estado, 'pendiente')))
+    .orderBy(asc(encuestas.createdAt))
 }
 
 export async function getRecordatorioActivo(campanaId: string) {
@@ -99,9 +112,7 @@ export async function getRecordatorioActivo(campanaId: string) {
   )
 }
 
-export async function puedeCrearRecordatorio(
-  campanaId: string
-): Promise<PuedeCrearRecordatorioResult> {
+export async function puedeCrearRecordatorio(campanaId: string): Promise<PuedeCrearRecordatorioResult> {
   const recordatorios = await getRecordatoriosByCampana(campanaId)
   const recordatoriosReales = recordatorios.filter((item) => item.numero_recordatorio > 0)
   const ultimoRecordatorioReal = recordatoriosReales.at(-1)
@@ -134,7 +145,6 @@ export async function puedeCrearRecordatorio(
 }
 
 export async function crearRecordatorio(campanaId: string, numeroRecordatorio: number) {
-  const supabase = await createSupabaseServer()
   const pendientes = await getClientesPendientes(campanaId)
 
   if (pendientes.length === 0) {
@@ -144,53 +154,38 @@ export async function crearRecordatorio(campanaId: string, numeroRecordatorio: n
   const payload = pendientes
     .filter((encuesta) => encuesta.clientes?.id)
     .map((encuesta) => ({
-      campana_id: campanaId,
-      cliente_id: encuesta.clientes!.id,
-      numero_recordatorio: numeroRecordatorio,
+      campanaId,
+      clienteId: encuesta.clientes!.id,
+      numeroRecordatorio,
     }))
 
-  const { error } = await supabase.from('envios').insert(payload)
-  if (error) throw error
+  await db.insert(envios).values(payload)
 
   return { total: payload.length }
 }
 
-export async function marcarRecordatorioEnviado(
-  campanaId: string,
-  numeroRecordatorio: number
-) {
-  const supabase = await createSupabaseServer()
+export async function marcarRecordatorioEnviado(campanaId: string, numeroRecordatorio: number) {
   const timestamp = new Date().toISOString()
-  const { data: envios, error: enviosSelectError } = await supabase
-    .from('envios')
-    .select('cliente_id')
-    .eq('campana_id', campanaId)
-    .eq('numero_recordatorio', numeroRecordatorio)
 
-  if (enviosSelectError) throw enviosSelectError
+  await db.transaction(async (tx) => {
+    const enviosDelRecordatorio = await tx
+      .select({ clienteId: envios.clienteId })
+      .from(envios)
+      .where(and(eq(envios.campanaId, campanaId), eq(envios.numeroRecordatorio, numeroRecordatorio)))
 
-  const { error } = await supabase
-    .from('envios')
-    .update({
-      estado_envio: 'enviado',
-      fecha_envio: timestamp,
-    })
-    .eq('campana_id', campanaId)
-    .eq('numero_recordatorio', numeroRecordatorio)
+    await tx
+      .update(envios)
+      .set({ estadoEnvio: 'enviado', fechaEnvio: timestamp })
+      .where(and(eq(envios.campanaId, campanaId), eq(envios.numeroRecordatorio, numeroRecordatorio)))
 
-  if (error) throw error
+    const clienteIds = Array.from(new Set(enviosDelRecordatorio.map((e) => e.clienteId)))
+    if (clienteIds.length === 0) return
 
-  const clienteIds = Array.from(new Set((envios ?? []).map((item) => item.cliente_id)))
-  if (clienteIds.length === 0) return
-
-  const { error: encuestasError } = await supabase
-    .from('encuestas')
-    .update({ estado: 'recordatorio_enviado' })
-    .eq('campana_id', campanaId)
-    .in('cliente_id', clienteIds)
-    .eq('estado', 'pendiente')
-
-  if (encuestasError) throw encuestasError
+    await tx
+      .update(encuestas)
+      .set({ estado: 'recordatorio_enviado' })
+      .where(and(eq(encuestas.campanaId, campanaId), inArray(encuestas.clienteId, clienteIds), eq(encuestas.estado, 'pendiente')))
+  })
 }
 
 export const LLAMADOS_PAGE_SIZE = 25
@@ -200,178 +195,167 @@ export async function getEncuestasNecesidadLlamado(
   tipoEncuestaId?: string
 ): Promise<{ data: EncuestaNecesidadLlamado[]; total: number }> {
   await syncWorkflowEstados()
-  const supabase = await createSupabaseServer()
   const from = (page - 1) * LLAMADOS_PAGE_SIZE
-  const to = from + LLAMADOS_PAGE_SIZE - 1
 
-  let query = supabase
-    .from('encuestas')
-    .select(`
-      id,
-      token,
-      estado,
-      campanas!inner(id, nombre, fecha, tipo_encuesta_id, tipos_encuesta(id, nombre, slug)),
-      clientes(id, nombre, telefono, telefono_2, telefono_3, concesionario, orden_fabricacion, tipo_maquina),
-      encuesta_medidas(id, comentario, created_at, created_by, updated_at)
-    `, { count: 'exact' })
-    .eq('estado', 'necesidad_de_llamado')
+  const whereClause = tipoEncuestaId
+    ? and(eq(encuestas.estado, 'necesidad_de_llamado'), eq(campanas.tipoEncuestaId, tipoEncuestaId))
+    : eq(encuestas.estado, 'necesidad_de_llamado')
 
-  if (tipoEncuestaId) {
-    query = query.eq('campanas.tipo_encuesta_id', tipoEncuestaId)
-  }
+  const [rows, totalResult] = await Promise.all([
+    db
+      .select({
+        id: encuestas.id,
+        token: encuestas.token,
+        campanaId: campanas.id,
+        campanaNombre: campanas.nombre,
+        campanaFecha: campanas.fecha,
+        tipoNombre: tiposEncuesta.nombre,
+        tipoSlug: tiposEncuesta.slug,
+        clienteId: clientes.id,
+        clienteNombre: clientes.nombre,
+        clienteTelefono: clientes.telefono,
+        clienteTelefono2: clientes.telefono2,
+        clienteTelefono3: clientes.telefono3,
+        clienteConcesionario: clientes.concesionario,
+        clienteOrdenFabricacion: clientes.ordenFabricacion,
+        clienteTipoMaquina: clientes.tipoMaquina,
+      })
+      .from(encuestas)
+      .innerJoin(campanas, eq(encuestas.campanaId, campanas.id))
+      .leftJoin(tiposEncuesta, eq(campanas.tipoEncuestaId, tiposEncuesta.id))
+      .innerJoin(clientes, eq(encuestas.clienteId, clientes.id))
+      .where(whereClause)
+      .orderBy(asc(encuestas.createdAt))
+      .limit(LLAMADOS_PAGE_SIZE)
+      .offset(from),
+    db
+      .select({ total: sql<number>`count(*)::int` })
+      .from(encuestas)
+      .innerJoin(campanas, eq(encuestas.campanaId, campanas.id))
+      .where(whereClause),
+  ])
 
-  const { data, error, count } = await query
-    .order('created_at', { ascending: true })
-    .order('created_at', { ascending: true, referencedTable: 'encuesta_medidas' })
-    .range(from, to)
-
-  if (error) throw error
+  const medidasByEncuesta = await getMedidasByEncuestaIds(rows.map((r) => r.id))
 
   return {
-    data: (data ?? []).map((item) => {
-      const campana = Array.isArray(item.campanas) ? item.campanas[0] ?? null : item.campanas
-      const tipo = campana
-        ? Array.isArray(campana.tipos_encuesta)
-          ? campana.tipos_encuesta[0] ?? null
-          : campana.tipos_encuesta
-        : null
-
-      return {
-        id: item.id,
-        token: item.token,
-        estado: 'necesidad_de_llamado' as const,
-        campana: campana
-          ? {
-              id: campana.id,
-              nombre: campana.nombre,
-              fecha: campana.fecha,
-              tipoNombre: tipo?.nombre ?? null,
-              tipoSlug: tipo?.slug ?? null,
-            }
-          : null,
-        cliente: Array.isArray(item.clientes) ? item.clientes[0] ?? null : item.clientes,
-        medidas: mapMedidas(item.encuesta_medidas),
-      }
-    }),
-    total: count ?? 0,
+    data: rows.map((r) => ({
+      id: r.id,
+      token: r.token,
+      estado: 'necesidad_de_llamado' as const,
+      campana: {
+        id: r.campanaId,
+        nombre: r.campanaNombre,
+        fecha: r.campanaFecha,
+        tipoNombre: r.tipoNombre,
+        tipoSlug: r.tipoSlug,
+      },
+      cliente: {
+        id: r.clienteId,
+        nombre: r.clienteNombre,
+        telefono: r.clienteTelefono,
+        telefono_2: r.clienteTelefono2,
+        telefono_3: r.clienteTelefono3,
+        concesionario: r.clienteConcesionario,
+        orden_fabricacion: r.clienteOrdenFabricacion,
+        tipo_maquina: r.clienteTipoMaquina,
+      },
+      medidas: medidasByEncuesta.get(r.id) ?? [],
+    })),
+    total: totalResult[0].total,
   }
 }
 
 export async function getEncuestasSinRespuesta(): Promise<EncuestaSinRespuesta[]> {
-  const supabase = await createSupabaseServer()
-  const { data, error } = await supabase
-    .from('encuestas')
-    .select(`
-      id,
-      token,
-      estado,
-      comentario_sin_respuesta,
-      marcado_sin_respuesta_at,
-      campanas(id, nombre, fecha),
-      clientes(id, nombre, telefono, telefono_2, telefono_3, concesionario, orden_fabricacion),
-      encuesta_medidas(id, comentario, created_at, created_by, updated_at)
-    `)
-    .eq('estado', 'sin_respuesta')
-    .order('marcado_sin_respuesta_at', { ascending: false })
-    .order('created_at', { ascending: true, referencedTable: 'encuesta_medidas' })
+  const rows = await db
+    .select({
+      id: encuestas.id,
+      token: encuestas.token,
+      comentario: encuestas.comentarioSinRespuesta,
+      marcadoAt: encuestas.marcadoSinRespuestaAt,
+      campanaId: campanas.id,
+      campanaNombre: campanas.nombre,
+      campanaFecha: campanas.fecha,
+      clienteId: clientes.id,
+      clienteNombre: clientes.nombre,
+      clienteTelefono: clientes.telefono,
+      clienteTelefono2: clientes.telefono2,
+      clienteTelefono3: clientes.telefono3,
+      clienteConcesionario: clientes.concesionario,
+      clienteOrdenFabricacion: clientes.ordenFabricacion,
+    })
+    .from(encuestas)
+    .innerJoin(campanas, eq(encuestas.campanaId, campanas.id))
+    .innerJoin(clientes, eq(encuestas.clienteId, clientes.id))
+    .where(eq(encuestas.estado, 'sin_respuesta'))
+    .orderBy(desc(encuestas.marcadoSinRespuestaAt))
 
-  if (error) throw error
+  const medidasByEncuesta = await getMedidasByEncuestaIds(rows.map((r) => r.id))
 
-  return (data ?? []).map((item) => ({
-    id: item.id,
-    token: item.token,
-    estado: 'sin_respuesta',
-    comentario: item.comentario_sin_respuesta,
-    marcadoAt: item.marcado_sin_respuesta_at,
-    campana: Array.isArray(item.campanas) ? item.campanas[0] ?? null : item.campanas,
-    cliente: Array.isArray(item.clientes) ? item.clientes[0] ?? null : item.clientes,
-    medidas: mapMedidas(item.encuesta_medidas),
+  return rows.map((r) => ({
+    id: r.id,
+    token: r.token,
+    estado: 'sin_respuesta' as const,
+    comentario: r.comentario,
+    marcadoAt: r.marcadoAt,
+    campana: { id: r.campanaId, nombre: r.campanaNombre, fecha: r.campanaFecha },
+    cliente: {
+      id: r.clienteId,
+      nombre: r.clienteNombre,
+      telefono: r.clienteTelefono,
+      telefono_2: r.clienteTelefono2,
+      telefono_3: r.clienteTelefono3,
+      concesionario: r.clienteConcesionario,
+      orden_fabricacion: r.clienteOrdenFabricacion,
+    },
+    medidas: medidasByEncuesta.get(r.id) ?? [],
   }))
 }
 
-export async function agregarMedidaLlamado(
-  encuestaId: string,
-  comentario: string,
-  creadoPor: string | null
-) {
-  const supabase = await createSupabaseServer()
-  const { error } = await supabase
-    .from('encuesta_medidas')
-    .insert({ encuesta_id: encuestaId, comentario, created_by: creadoPor })
-
-  if (error) throw error
+export async function agregarMedidaLlamado(encuestaId: string, comentario: string, creadoPor: string | null) {
+  await db.insert(encuestaMedidas).values({ encuestaId, comentario, createdBy: creadoPor })
 }
 
 export async function actualizarMedidaLlamado(medidaId: string, comentario: string) {
-  const supabase = await createSupabaseServer()
-  const { error } = await supabase
-    .from('encuesta_medidas')
-    .update({ comentario })
-    .eq('id', medidaId)
-
-  if (error) throw error
+  await db.update(encuestaMedidas).set({ comentario }).where(eq(encuestaMedidas.id, medidaId))
 }
 
 export async function eliminarMedidaLlamado(medidaId: string) {
-  const supabase = await createSupabaseServer()
-  const { error } = await supabase.from('encuesta_medidas').delete().eq('id', medidaId)
-
-  if (error) throw error
+  await db.delete(encuestaMedidas).where(eq(encuestaMedidas.id, medidaId))
 }
 
-export async function marcarEncuestaSinRespuesta(
-  encuestaId: string,
-  comentario: string,
-  marcadoPor: string | null
-) {
-  const supabase = await createSupabaseServer()
-  const { error } = await supabase
-    .from('encuestas')
-    .update({
+export async function marcarEncuestaSinRespuesta(encuestaId: string, comentario: string, marcadoPor: string | null) {
+  await db
+    .update(encuestas)
+    .set({
       estado: 'sin_respuesta',
-      comentario_sin_respuesta: comentario,
-      marcado_sin_respuesta_at: new Date().toISOString(),
-      marcado_sin_respuesta_por: marcadoPor,
+      comentarioSinRespuesta: comentario,
+      marcadoSinRespuestaAt: new Date().toISOString(),
+      marcadoSinRespuestaPor: marcadoPor,
     })
-    .eq('id', encuestaId)
-    .eq('estado', 'necesidad_de_llamado')
-
-  if (error) throw error
+    .where(and(eq(encuestas.id, encuestaId), eq(encuestas.estado, 'necesidad_de_llamado')))
 }
 
-export async function revertirEncuestaANecesidadLlamado(
-  encuestaId: string,
-  comentario: string,
-  revertidoPor: string | null
-) {
-  const supabase = await createSupabaseServer()
+export async function revertirEncuestaANecesidadLlamado(encuestaId: string, comentario: string, revertidoPor: string | null) {
+  await db.transaction(async (tx) => {
+    const actualizadas = await tx
+      .update(encuestas)
+      .set({
+        estado: 'necesidad_de_llamado',
+        comentarioSinRespuesta: null,
+        marcadoSinRespuestaAt: null,
+        marcadoSinRespuestaPor: null,
+      })
+      .where(and(eq(encuestas.id, encuestaId), eq(encuestas.estado, 'sin_respuesta')))
+      .returning({ id: encuestas.id })
 
-  const { error, data } = await supabase
-    .from('encuestas')
-    .update({
-      estado: 'necesidad_de_llamado',
-      comentario_sin_respuesta: null,
-      marcado_sin_respuesta_at: null,
-      marcado_sin_respuesta_por: null,
-    })
-    .eq('id', encuestaId)
-    .eq('estado', 'sin_respuesta')
-    .select('id')
+    if (actualizadas.length === 0) {
+      throw new Error('La OF ya no está marcada como sin respuesta.')
+    }
 
-  if (error) throw error
-  if (!data || data.length === 0) {
-    throw new Error('La OF ya no está marcada como sin respuesta.')
-  }
-
-  const { error: medidaError } = await supabase
-    .from('encuesta_medidas')
-    .insert({ encuesta_id: encuestaId, comentario, created_by: revertidoPor })
-
-  if (medidaError) throw medidaError
+    await tx.insert(encuestaMedidas).values({ encuestaId, comentario, createdBy: revertidoPor })
+  })
 }
 
 function getNombreRecordatorio(numeroRecordatorio: number) {
-  return numeroRecordatorio === 0
-    ? 'envío inicial'
-    : `recordatorio ${numeroRecordatorio}`
+  return numeroRecordatorio === 0 ? 'envío inicial' : `recordatorio ${numeroRecordatorio}`
 }
