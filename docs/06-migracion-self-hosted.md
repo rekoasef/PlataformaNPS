@@ -90,7 +90,7 @@ Patrón seguido en cada módulo: el `service.ts` cambia de motor por dentro (Sup
 
 - [x] `clientes` — `getClientes`, `getClienteById`, `createCliente`, `getClientesByCampana`. También se migró el insert de importación CSV que vivía suelto en `actions.ts` (ahora `createClientesBulk` en el service).
 - [x] `notificaciones` — `getNotificaciones`, `getUnreadCount`, `marcarTodasLeidas`. La autenticación de `marcarTodasLeidasAction` (`supabase.auth.getUser()`) queda en Supabase Auth por ahora — es una fase aparte, todavía sin decidir/migrar.
-- [ ] `campanas`
+- [x] `campanas` — service.ts completo, más `campanas/actions.ts` (que tenía lógica de negocio pesada viviendo fuera del service: alta completa de campaña y baja en cascada). Esta última parte ahora usa `db.transaction()` de Drizzle — mejora real sobre el comportamiento anterior con Supabase, que no podía agrupar los pasos en una transacción real y "deshacía a mano" si algo fallaba a mitad de camino (podía dejar filas huérfanas). Verificado con un caso de fallo forzado a mitad de transacción: revierte todo.
 - [ ] `recordatorios` (`avisos.service.ts`, `recordatorios.service.ts`, `workflow.service.ts`)
 - [ ] `alertas`
 - [ ] `configuracion` (ojo: `usuarios.service.ts` probablemente depende de Supabase Auth admin API — no migrable hasta decidir el reemplazo de Auth)
