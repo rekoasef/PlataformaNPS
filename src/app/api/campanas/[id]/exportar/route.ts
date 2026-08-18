@@ -1,4 +1,7 @@
-import { createSupabaseAdmin, createSupabaseServer } from '@/lib/supabase/server'
+import { createSupabaseServer } from '@/lib/supabase/server'
+import { db } from '@/lib/db/client'
+import { campanas, clientes, encuestas } from '@/lib/db/schema'
+import { and, eq, inArray } from 'drizzle-orm'
 import { generarCSVPendientes } from '@/lib/utils/exportar'
 import { NextResponse } from 'next/server'
 
@@ -14,15 +17,24 @@ export async function GET(
   }
 
   const { id } = await params
-  const supabase = createSupabaseAdmin()
 
-  const [{ data: campana }, { data: encuestas }] = await Promise.all([
-    supabase.from('campanas').select('nombre').eq('id', id).single(),
-    supabase
-      .from('encuestas')
-      .select('token, clientes(nombre, telefono, telefono_2, telefono_3, concesionario, orden_fabricacion)')
-      .eq('campana_id', id)
-      .in('estado', ['pendiente', 'recordatorio_enviado']),
+  const [[campana], encuestasPendientes] = await Promise.all([
+    db.select({ nombre: campanas.nombre }).from(campanas).where(eq(campanas.id, id)).limit(1),
+    db
+      .select({
+        token: encuestas.token,
+        clientes: {
+          nombre: clientes.nombre,
+          telefono: clientes.telefono,
+          telefono_2: clientes.telefono2,
+          telefono_3: clientes.telefono3,
+          concesionario: clientes.concesionario,
+          orden_fabricacion: clientes.ordenFabricacion,
+        },
+      })
+      .from(encuestas)
+      .innerJoin(clientes, eq(encuestas.clienteId, clientes.id))
+      .where(and(eq(encuestas.campanaId, id), inArray(encuestas.estado, ['pendiente', 'recordatorio_enviado']))),
   ])
 
   if (!campana) {
@@ -30,7 +42,7 @@ export async function GET(
   }
 
   const appUrl = process.env.NEXT_PUBLIC_APP_URL ?? 'http://localhost:3000'
-  const csv = generarCSVPendientes(encuestas ?? [], appUrl)
+  const csv = generarCSVPendientes(encuestasPendientes, appUrl)
   const filename = `pendientes_${campana.nombre.replace(/\s+/g, '_')}.csv`
 
   return new Response(csv, {
