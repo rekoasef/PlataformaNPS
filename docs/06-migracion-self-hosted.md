@@ -97,9 +97,15 @@ Patrón seguido en cada módulo: el `service.ts` cambia de motor por dentro (Sup
 - [x] `plantillas`
 - [x] `rambla` — consulta la vista `v_respuestas_rambla` (Drizzle la trata como una tabla de solo lectura). De paso se migró actualizarRegaloEstadoAction/guardarSeguimientoAction en rambla/actions.ts.
 - [x] `whatsapp` — plantillas + jobs. `crearJob` en transacción (job + detalle por contacto). Bug propio encontrado y corregido: `.where()` encadenado dos veces no combina condiciones en Drizzle (pisa la anterior) — ver gotcha abajo.
-- [ ] `dashboard` (738 líneas, el más grande — muchas agregaciones/conteos, prestar atención al gotcha de `count(*)` de abajo)
+- [x] `dashboard` (738 líneas) — solo 5 de las ~20 funciones tocaban Supabase directo (`getRespuestas`, `getDashboardFilterOptions`, `getEfectividadEnvios`, `getTiposEncuestaActivos`, `getNpsPorTipoEncuesta`); el resto es cálculo puro en JS sobre el resultado de `getRespuestas` y quedó intacto. `getRespuestas` se reescribió desde cero (join explícito en vez del embed de Supabase) — ver detalle en sección 11.
 
-**Puntos sueltos de Supabase fuera de `modules/*/services/`** que van a necesitar migrarse en algún momento (no son parte de ningún módulo, viven en rutas de la app): `src/app/encuesta/actions.ts` y `src/app/encuesta/actions-fin-garantia.ts` (el formulario público de encuesta, inserta en `notificaciones` directo) y `src/modules/recordatorios/services/avisos.service.ts` (también inserta en `notificaciones` sin pasar por el service de ese módulo).
+**Todos los módulos de `src/modules/*/services/` están migrados** (con la excepción a propósito de `usuarios.service.ts`, bloqueado por Auth). También se migraron los "cabos sueltos" de Supabase que vivían fuera de los services pero dentro del alcance de cada módulo: CSV bulk insert de clientes, alta/baja completa de campañas (`campanas/actions.ts`, con transacciones), actualizar regalo/seguimiento de Rambla, exportación CSV de pendientes de campaña, y el logging de `email_errores` en `send-email.ts`.
+
+### Pendiente — fuera del alcance de "migrar módulos"
+
+- **`src/app/encuesta/*`** (`page.tsx`, `actions.ts`, `actions-fin-garantia.ts`): el **formulario público de encuesta** — valida token, bloquea doble respuesta, inserta en `respuestas`, dispara alertas NPS crítico y notificaciones. No es parte de ningún módulo (vive en `src/app/encuesta/`), y es la superficie más sensible en seguridad de todo el proyecto (Fase 6 del `CLAUDE.md`: revalidación de token en servidor, bloqueo de doble respuesta). Amerita su propia sesión con foco extra en probar bien los casos límite, no un pase rápido como el resto.
+- **`src/modules/recordatorios/services/avisos.service.ts`**: ya migrado (ver checklist arriba) — se corrige esta nota, había quedado desactualizada de una revisión anterior a la migración completa del módulo `recordatorios`.
+- `usuarios.service.ts` (`configuracion`): bloqueado por Auth, ver checklist de módulos arriba.
 
 ### Gotcha: `count(*)` con Drizzle devuelve string, no number
 
@@ -151,3 +157,11 @@ Probado end-to-end con una query de conteo contra staging — coincide con el da
 
 - [ ] Configurar `supabase login` (Personal Access Token) para que el CLI pueda trackear el historial de migraciones aplicadas — hoy esta migración se aplicó por `psql` directo, no vía `supabase db push`, así que no quedó registrada en la tabla interna de tracking del CLI (`supabase migration list` puede seguir mostrándola como pendiente; es inofensivo por el `IF NOT EXISTS` pero conviene prolijarlo).
 - [ ] Revisar si hay más drift de schema no detectado en otras tablas/objetos (se comparó estructura completa de columnas de las 13 tablas, pero no funciones, triggers, ni vistas).
+
+## 11. `dashboard.service.ts`: reescrito, no traducido (2026-08-18)
+
+Fue el módulo más grande (738 líneas) pero no el más complejo de migrar en la práctica: solo 5 de sus ~20 funciones tocaban Supabase directo, el resto es cálculo puro en JS que llama a esas 5 por debajo y quedó sin cambios.
+
+`getRespuestas` (la función central, de la que dependen casi todas las demás) se reescribió de cero en vez de traducirse línea por línea. El original tenía un tipo `RawEncuestaConRespuesta` y funciones `pickOne`/`mapRespuesta` dedicadas exclusivamente a resolver una ambigüedad de Supabase: un recurso embebido (`campanas(...)`, `clientes(...)`) puede venir tipado como un array de un elemento o como el objeto directo, según el caso, y hay que normalizarlo a mano. Con un join explícito de Drizzle (`.innerJoin(...)`/`.leftJoin(...)`) esa ambigüedad no existe — cada fila del resultado ya trae las columnas planas, sin normalizar nada. El filtrado híbrido (algunos filtros al SQL, otros en JS sobre el resultado) se mantuvo idéntico al original.
+
+Se verificó con cruces de suma (no solo "no explota"): conteo total de respuestas contra la tabla real, suma de NPS por concesionario == total, suma del comparativo por canal == total, efectividad de envíos contra conteo directo de `encuestas`. Todo coincidió.
