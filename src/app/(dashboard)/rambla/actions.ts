@@ -1,9 +1,9 @@
 'use server'
 
 import { revalidatePath } from 'next/cache'
-import { createSupabaseAdmin, createSupabaseServer } from '@/lib/supabase/server'
+import { createSupabaseServer } from '@/lib/supabase/server'
 import type { RegaloEstado, RamblaFiltros, RespuestaRambla } from '@/modules/rambla/types/rambla.types'
-import { exportarRespuestasRambla } from '@/modules/rambla/services/rambla.service'
+import { actualizarRegaloEstado, exportarRespuestasRambla, guardarSeguimiento } from '@/modules/rambla/services/rambla.service'
 
 async function getRoleOrThrow() {
   const supabase = await createSupabaseServer()
@@ -19,13 +19,7 @@ export async function actualizarRegaloEstadoAction(
 ): Promise<void> {
   await getRoleOrThrow()
 
-  const admin = createSupabaseAdmin()
-  const { error } = await admin
-    .from('respuestas')
-    .update({ regalo_estado: estado })
-    .eq('id', respuestaId)
-
-  if (error) throw error
+  await actualizarRegaloEstado(respuestaId, estado)
   revalidatePath('/rambla')
 }
 
@@ -38,16 +32,7 @@ export async function guardarSeguimientoAction(
   const trimmed = numeroSeguimiento.trim()
   if (!trimmed) throw new Error('El número de seguimiento no puede estar vacío')
 
-  const admin = createSupabaseAdmin()
-  const { error } = await admin
-    .from('respuestas')
-    .update({
-      numero_seguimiento: trimmed,
-      fecha_seguimiento: new Date().toISOString(),
-    })
-    .eq('id', respuestaId)
-
-  if (error) throw error
+  await guardarSeguimiento(respuestaId, trimmed)
   revalidatePath('/rambla')
 }
 
