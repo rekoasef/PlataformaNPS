@@ -23,6 +23,10 @@ export const auth = betterAuth({
     minPasswordLength: 8,
     // Verifica tanto los hashes bcrypt heredados de Supabase como los propios (ver ./password.ts)
     password: { hash: hashPassword, verify: verifyPassword },
+    // OJO: el template del mail dice "válido por 1 hora" en texto fijo. Coincide
+    // con el default de Better Auth (3600s), pero si se cambia acá hay que
+    // cambiarlo también en buildRecuperarPasswordTemplate o el mail miente.
+    resetPasswordTokenExpiresIn: 3600,
     sendResetPassword: async ({ user, url }) => {
       const template = buildRecuperarPasswordTemplate(url)
       await sendEmail({ to: user.email, ...template })
