@@ -261,7 +261,32 @@ Antes el middleware leía el rol del JWT y decidía todo. Better Auth guarda el 
 
 ### Pendiente de esta fase
 
-- [ ] Correr `scripts/migrar-usuarios-auth.ts --aplicar` contra staging para probar con los 23 usuarios reales (hasta ahora se probó con usuarios sintéticos).
+- [x] Correr `scripts/migrar-usuarios-auth.ts --aplicar` contra staging — 23/23 migrados, todos con `issuer='local:credential'`, hash bcrypt y su UUID original. Login con contraseña real verificado.
 - [ ] Re-agregar las FKs a usuarios que quedaron sueltas desde el inicio de la migración: `encuestas.marcado_sin_respuesta_por` y `encuesta_medidas.created_by` son `UUID` sin constraint, y ahora existe `auth_user(id)` a la que apuntar. **Ojo con los tipos**: esas columnas son `UUID` y `auth_user.id` es `TEXT`, así que hay que convertirlas.
 - [ ] Sacar `@supabase/ssr` y `@supabase/supabase-js` de `package.json` (ya no los importa nadie; `src/types/database.types.ts` se sigue usando solo para tipos, no tiene dependencia en runtime).
 - [ ] Definir `BETTER_AUTH_SECRET` y `BETTER_AUTH_URL` en el entorno de producción durante el cutover. **Si `BETTER_AUTH_SECRET` cambia, todas las sesiones abiertas se invalidan** — no regenerarlo por accidente entre deploys.
+
+### Reset de contraseña: probado de punta a punta con SMTP real (2026-08-19)
+
+Verificado con una casilla real: el mail llega, el link abre el formulario y la contraseña queda cambiada. Antes de eso, 11 asserts sobre la lógica (token de un solo uso, vencimiento, token inventado, y que no se revele si un email existe).
+
+**La migración perezosa de hashes funciona:** después del reset, ese usuario pasó de bcrypt a scrypt mientras los otros 22 siguen con su hash heredado de Supabase. Cada persona que resetee se va pasando sola al formato nuevo; no hay que hacer nada.
+
+#### Por qué el link daba 404 (y por qué costó tanto encontrarlo)
+
+Fueron **tres causas encadenadas**, y cada arreglo dejaba el síntoma igual, lo que hacía parecer que nada funcionaba:
+
+1. **Las dos mitades del link salían de fuentes distintas.** La base sale de `BETTER_AUTH_URL`; el `callbackURL` se armaba con el header `Host`. Next levantó en `:3002` (el `:3000` estaba ocupado por otro proyecto del desarrollador) y quedó un link con base `:3000` y callback `:3002`. **Arreglo:** `redirectTo` va relativo (`/nueva-password`), así ambas mitades salen siempre de `BETTER_AUTH_URL`. Better Auth lo permite (`allowRelativePaths` en `originCheck`). Esto además cierra un vector de **host-header injection**: armar links de recuperación con el header `Host` deja que un atacante mande un `Host` falso y la víctima reciba un link a su dominio.
+
+2. **El hot-reload de Next no relee los `.env`.** Tras el arreglo, el server seguía sirviendo con el `BETTER_AUTH_URL` viejo en memoria: recompiló el código (por eso el callback ya era relativo) pero no recargó las variables. **Hay que matar el proceso y arrancarlo de nuevo.**
+
+3. **La causa de fondo: `set -a && source .env.local` deja las variables exportadas en esa terminal**, y en Next el entorno del proceso **le gana** a `.env.local`. Como esos comandos se habían usado antes para correr el script de migración (cuando la variable todavía decía `:3000`), cada `npm run dev` desde esa misma terminal heredaba el valor viejo — por más reinicios que se hicieran. **Se diagnostica con `tr '\0' '\n' < /proc/<pid>/environ | grep VARIABLE`**, que muestra el entorno real del proceso en vez del que uno supone. **Arreglo:** terminal nueva, o `unset BETTER_AUTH_URL`.
+
+**Lección para el cutover:** `BETTER_AUTH_URL` es la única variable cuyo error **no se nota** — login, sesiones y roles andan igual. Solo se rompe el reset de contraseña, o sea que te enterás cuando alguien queda afuera. Verificarla explícitamente al deployar.
+
+El script `dev` quedó fijado en el puerto **3010** (`next dev -p 3010`) porque hay varios proyectos Next en la máquina y el puerto dependía del orden de arranque.
+
+#### Otros dos hallazgos
+
+- **Pedir un reset nuevo no invalida los anteriores.** Si alguien pide varios, todos los links siguen sirviendo hasta que vencen (1h). Un mail reenviado o filtrado sigue siendo utilizable en esa ventana. No se cambió el comportamiento, pero conviene saberlo.
+- **Cuidado al limpiar `auth_verification` en scripts de prueba:** borrar por patrón (`identifier LIKE 'reset-password:%'`) se lleva puestos los pedidos de reset **reales** que haya pendientes. Acotar siempre al usuario de prueba.
