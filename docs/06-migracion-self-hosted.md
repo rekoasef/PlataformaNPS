@@ -44,7 +44,8 @@ Todo el desarrollo de la migración se hace **en paralelo a producción, sin toc
 - [x] Aplicar `supabase/migrations/*.sql` contra el Postgres de staging — las 13 tablas del schema quedaron creadas y verificadas. Se aplicó una versión filtrada (`migrations-selfhosted-staging/combined_selfhosted.sql`, generado localmente, no versionado en git) que omite a propósito: extensión/jobs de `pg_cron`, `CREATE POLICY`/`ENABLE ROW LEVEL SECURITY` (roles `authenticated`/`anon`/`service_role` no existen sin Supabase), y dos foreign keys a `auth.users(id)` (columnas `encuestas.marcado_sin_respuesta_por` y `encuesta_medidas.created_by`, que quedaron como `UUID` sin constraint hasta que se defina el nuevo sistema de Auth).
 - [x] Migrar datos reales desde Supabase (`pg_dump` → `pg_restore`) al ambiente de staging — las 13 tablas migradas y verificadas (conteos + checksum de contenido idénticos entre origen y destino).
 - [x] Elegir ORM/data-access layer: **Drizzle**, decidido y configurado (ver sección 9).
-- [ ] Migrar `services/*.ts` módulo por módulo, reemplazando `supabase.from(...)` por queries propias.
+- [x] Migrar `services/*.ts` módulo por módulo, reemplazando `supabase.from(...)` por queries propias (ver sección 10; queda `usuarios.service.ts` bloqueado por Auth).
+- [x] Migrar `src/app/encuesta/*` — formulario público (ver sección 12).
 - [ ] Definir y evaluar Auth (NextAuth vs Better Auth).
 - [ ] Reemplazar los 2 jobs de `pg_cron` por endpoints + cron de sistema.
 - [ ] Definir estrategia de backups del Postgres de staging/producción con IT.
@@ -69,20 +70,32 @@ Todo el desarrollo de la migración se hace **en paralelo a producción, sin toc
 - **SSH a la VPS**: `ssh -p 5399 -i ~/.ssh/id_ed25519_rasef_vps posventa@200.58.99.137`. Usuario personal con sudo (ver sección 5). Puerto SSH `5399`, no el 22 por defecto — importante no asumir el default en otros contextos (ej. scripts, otros accesos).
 - **Postgres de staging** (`127.0.0.1:5433` en la VPS, no expuesto a internet): para conectarse desde la compu de desarrollo hace falta un túnel SSH:
   ```bash
-  ssh -p 5399 -i ~/.ssh/id_ed25519_rasef_vps -N -L 5433:127.0.0.1:5433 posventa@200.58.99.137
+  ssh -p 5399 -i ~/.ssh/id_ed25519_rasef_vps -N -L 5434:127.0.0.1:5433 posventa@200.58.99.137
   ```
-  Dejar esa terminal abierta (no imprime nada, es normal), y en otra terminal conectar a `localhost:5433` con las credenciales de `.env.staging` (`STAGING_DB_USER`/`STAGING_DB_PASSWORD`/`STAGING_DB_NAME`).
+  Dejar esa terminal abierta (no imprime nada, es normal), y en otra terminal conectar a `localhost:5434` con las credenciales de `.env.staging` (`STAGING_DB_USER`/`STAGING_DB_PASSWORD`/`STAGING_DB_NAME`). El lado local es **5434** (no 5433) por el conflicto de puertos descrito en los gotchas; el lado remoto sigue siendo 5433.
+- **SSH agent (la clave tiene passphrase)**: los comandos que corre Claude arrancan cada uno en una shell nueva, así que `ssh-add` desde ahí no persiste. El flujo que funciona es que el desarrollador corra esto **en una terminal real**, todo en una línea, y le pase a Claude el valor de `SOCKET:` para que lo exporte como `SSH_AUTH_SOCK`:
+  ```bash
+  eval "$(ssh-agent -s)" && ssh-add ~/.ssh/id_ed25519_rasef_vps && echo "SOCKET: $SSH_AUTH_SOCK"
+  ```
 - **Migraciones aplicadas a staging**: se generaron localmente en `migrations-selfhosted-staging/` (raíz del repo, **no versionado en git**, es un artefacto de trabajo) — contiene `combined_selfhosted.sql` (las 31 migraciones concatenadas, con las partes de RLS/pg_cron/auth.users comentadas) y logs de qué se salteó por archivo. Útil como referencia si hay que resetear staging o para el `cutover` final a producción.
 
 ### Gotchas encontrados (para no perder tiempo de nuevo)
 
 - **Contraseña de Postgres "pegada" a la primera inicialización**: `POSTGRES_PASSWORD` en el `.env` solo se aplica la primera vez que se crea el volumen. Si el volumen ya existía (de una prueba anterior con otra password), cambiar el `.env` después no tiene efecto — hay que `docker compose down -v` (borra el volumen) y `up -d` de nuevo, o hacer `ALTER USER ... WITH PASSWORD` a mano conectando por el socket local del contenedor (`docker exec -it <contenedor> psql -U <user> -d <db>`, que no pide password).
-- **Puerto 5433 ocupado localmente**: el desarrollador tenía un contenedor viejo (`npsplatform_postgres_staging`, de cuando se validó `docker-compose.staging.yml` en su propia compu antes de que existiera la VPS de staging) corriendo en su máquina y ocupando el puerto 5433 — el túnel SSH no podía "ganar" ese puerto, y las conexiones caían silenciosamente en el contenedor local viejo en vez de ir a la VPS (síntoma: password authentication failed sin explicación aparente). Se resolvió con `docker stop npsplatform_postgres_staging` en la compu local. Si vuelve a pasar algo raro de auth, chequear primero `docker ps -a | grep postgres` en la compu local.
+- **Puerto 5433 ocupado localmente (pasó dos veces, con contenedores distintos)**: si algo local ya escucha en 5433, el túnel SSH no puede "ganar" ese puerto y las conexiones caen silenciosamente en el Postgres local en vez de ir a la VPS. El síntoma es engañoso: `password authentication failed for user "nps_staging"` sin explicación aparente — la password está bien, estás hablando con la base equivocada.
+  - 1ª vez: contenedor viejo `npsplatform_postgres_staging` (de validar `docker-compose.staging.yml` localmente). Resuelto con `docker stop`.
+  - 2ª vez (2026-08-19): `reclamospp-db-1`, de **otro proyecto del desarrollador**, publicando `0.0.0.0:5433->5432`. Ahí parar el contenedor no era opción razonable (es otro proyecto en uso), así que **se movió el túnel al puerto local 5434** y se actualizó `DATABASE_URL` en `.env.local`. Esta es la solución preferida de ahora en más: elegir un puerto local libre en vez de pelear por el 5433.
+  - Diagnóstico rápido: `ss -tlnp | grep 5433` (qué escucha realmente) y `docker ps --format '{{.Names}}\t{{.Ports}}'` (de quién es). Ojo que `docker ps -a` muestra contenedores parados que **no** son el problema — hay que mirar los que están `Up`.
 - **Migraciones con referencias a Supabase**: además de RLS/`pg_cron` (ya esperado), dos columnas tenían FK a `auth.users(id)` (`encuestas.marcado_sin_respuesta_por`, `encuesta_medidas.created_by`) — quedaron como `UUID` suelto sin constraint. Hay que recordar re-agregar la FK (contra la tabla de usuarios que sea del nuevo sistema de Auth) cuando esa fase se implemente.
 
 ## 7. Próximos pasos inmediatos
 
-1. Seguir migrando `services/*.ts` módulo por módulo (ver progreso en sección 10).
+Con `src/app/encuesta/*` migrado (sección 12), **toda la app corre contra Drizzle salvo lo que depende de Supabase Auth**. Lo que queda:
+
+1. **Auth** — decidir NextAuth/Auth.js vs Better Auth e implementarlo. Desbloquea `usuarios.service.ts` y permite re-agregar las FKs a la tabla de usuarios (`encuestas.marcado_sin_respuesta_por`, `encuesta_medidas.created_by`, hoy UUID sueltos).
+2. **Jobs de `pg_cron`** → endpoints + cron de sistema en la VPS.
+3. Backups del Postgres con IT.
+4. Cutover final.
 
 ## 10. Progreso de migración de módulos a Drizzle
 
@@ -165,3 +178,39 @@ Fue el módulo más grande (738 líneas) pero no el más complejo de migrar en l
 `getRespuestas` (la función central, de la que dependen casi todas las demás) se reescribió de cero en vez de traducirse línea por línea. El original tenía un tipo `RawEncuestaConRespuesta` y funciones `pickOne`/`mapRespuesta` dedicadas exclusivamente a resolver una ambigüedad de Supabase: un recurso embebido (`campanas(...)`, `clientes(...)`) puede venir tipado como un array de un elemento o como el objeto directo, según el caso, y hay que normalizarlo a mano. Con un join explícito de Drizzle (`.innerJoin(...)`/`.leftJoin(...)`) esa ambigüedad no existe — cada fila del resultado ya trae las columnas planas, sin normalizar nada. El filtrado híbrido (algunos filtros al SQL, otros en JS sobre el resultado) se mantuvo idéntico al original.
 
 Se verificó con cruces de suma (no solo "no explota"): conteo total de respuestas contra la tabla real, suma de NPS por concesionario == total, suma del comparativo por canal == total, efectividad de envíos contra conteo directo de `encuestas`. Todo coincidió.
+
+## 12. `src/app/encuesta/*`: formulario público migrado (2026-08-19)
+
+Última superficie fuera de `src/modules/*` que quedaba en Supabase, y la más sensible en seguridad de todo el proyecto: es lo único accesible sin login, donde el token es toda la credencial.
+
+**Cambio estructural:** la lógica de seguridad (validar token → chequear estado → verificar que no haya respuesta previa) estaba **duplicada casi textual** entre `actions.ts` y `actions-fin-garantia.ts`. Se extrajo a `src/app/encuesta/encuesta.db.ts`, que es ahora el único lugar donde el formulario público toca la base. Los dos actions bajaron ~100 líneas en conjunto y quedó un solo punto para auditar.
+
+`page.tsx` usa `getEncuestaPorToken()` (join explícito, sin el embed ambiguo de Supabase que obligaba a los `Array.isArray(...)` anidados).
+
+### Tres correcciones, no traducción literal
+
+1. **Token con formato inválido devolvía 500 en vez de 404.** `encuestas.token` es UUID. Con PostgREST, `?token=cualquier-cosa` devolvía error y el código caía en `notFound()`. Con Drizzle, Postgres aborta la query (`22P02 invalid input syntax for type uuid`) y eso escalaba a un 500. Se agregó un guard de formato (`esTokenConFormatoValido`) **antes** de tocar la base. Es un caso que solo aparece al cambiar de motor — vale revisarlo en cualquier otro lugar que compare un string crudo contra una columna UUID.
+
+2. **Race condition en el bloqueo de doble respuesta.** El original hacía "¿existe respuesta?" y después "insertar", sin transacción: dos envíos simultáneos del mismo token podían pasar ambos el chequeo. Lo salvaba el UNIQUE de `respuestas.encuesta_id`, pero el segundo usuario veía *"Error al guardar, intentá nuevamente"* en vez de *"ya completaste esta encuesta"*. Ahora todo va en `db.transaction()` con `SELECT ... FOR UPDATE OF encuestas`, que serializa los envíos del mismo token; el UNIQUE queda como última red (se captura el `23505` y devuelve el mensaje correcto).
+
+3. **`envia_regalo` salía de un embed anidado de Supabase** con doble `Array.isArray(...)`. Ahora viene del mismo join que ya valida el token, tipado.
+
+### Verificación
+
+Script de 36 asserts contra staging con datos reales, ejecutando los server actions de verdad (no queries sueltas): formato de token (incluido un intento de inyección), lectura del formulario por tipo, camino feliz, disparo del trigger, doble respuesta, estados `sin_respuesta`/inexistente, `canal_respuesta` según estado, **dos envíos simultáneos** (exactamente 1 gana y el perdedor recibe el mensaje correcto), notificaciones de NPS crítico y regalo, y el circuito completo de fin de garantía. 36/36. Los datos de prueba se crean y borran en la misma corrida; se verificó después que staging quedó igual que antes.
+
+**Confirmado en staging:** el trigger `trg_marcar_encuesta_respondida` y el constraint `respuestas_encuesta_id_key` existen y están activos — todo el bloqueo de doble respuesta depende de ellos y el `combined_selfhosted.sql` había filtrado otras cosas, así que no se daba por sentado.
+
+### Gotcha: probar esto puede mandar mails reales
+
+`system_config` en staging tiene **18 destinatarios reales** en `emails_notificacion` y 7 en `emails_rambla` (vinieron con los datos de producción), y `sendEmail` usa SMTP configurado en `.env.local`. Una prueba del camino de NPS crítico manda alertas de verdad a gente de la empresa. Al correr pruebas que toquen ese camino, neutralizar el SMTP apuntándolo a un host muerto:
+
+```bash
+SMTP_HOST=127.0.0.1 SMTP_PORT=1 SMTP_SECURE=false SMTP_USER=noop@test.invalid SMTP_PASS=noop EMAIL_FROM=noop@test.invalid npx tsx script.ts
+```
+
+Los envíos fallan con `ECONNREFUSED`, quedan registrados en `email_errores` (limpiar después con `DELETE FROM email_errores WHERE error_mensaje LIKE '%127.0.0.1:1%'`) y **no bloquean el guardado de la respuesta** — que es justamente el comportamiento que se quería verificar.
+
+### Nota: `formData.get()` devuelve `null`, y `.optional()` de Zod no lo acepta
+
+Los campos de comentario son `z.string().optional()`. Si el campo no viene en el `FormData`, `formData.get()` devuelve `null` (no `undefined`) y Zod lo rechaza, haciendo fallar **toda** la validación con el mensaje genérico "Por favor completá todas las preguntas antes de enviar". En producción no pasa porque los `textarea` siempre existen en el DOM y mandan `''`. Es una fragilidad latente heredada, no introducida por la migración: si alguna vez se saca o renombra un campo del formulario, el síntoma va a ser un error confuso y global en vez de uno apuntando al campo. Al escribir pruebas, mandar todos los campos opcionales como `''`, igual que el form real.

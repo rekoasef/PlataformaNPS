@@ -1,7 +1,9 @@
 'use server'
 
 import { z } from 'zod'
-import { createSupabaseAdmin } from '@/lib/supabase/server'
+import { db } from '@/lib/db/client'
+import { notificaciones } from '@/lib/db/schema'
+import { guardarRespuestaConToken } from './encuesta.db'
 import { enviarAlertaNpsCritico, enviarNotificacionRambla } from '@/modules/alertas/services/alertas.service'
 import { CONCESIONARIOS, MAQUINAS, getTipoMaquina } from './form-options'
 
@@ -69,91 +71,67 @@ export async function guardarRespuestaFinGarantiaAction(
     return { error: 'Por favor completá todas las preguntas antes de enviar.' }
   }
 
-  const supabase = createSupabaseAdmin()
-
-  const { data: encuesta } = await supabase
-    .from('encuestas')
-    .select('id, estado, campanas(tipos_encuesta(envia_regalo))')
-    .eq('token', result.data.token)
-    .single()
-
-  if (!encuesta) return { error: 'El link de encuesta no es válido.' }
-  if (encuesta.estado === 'respondida') return { error: 'Esta encuesta ya fue completada.' }
-  if (encuesta.estado === 'sin_respuesta') return { error: 'Esta encuesta fue cerrada como sin respuesta.' }
-
-  const { data: respuestaExistente } = await supabase
-    .from('respuestas')
-    .select('id')
-    .eq('encuesta_id', encuesta.id)
-    .maybeSingle()
-
-  if (respuestaExistente) return { error: 'Esta encuesta ya fue completada.' }
-
   const tipoMaquina = getTipoMaquina(result.data.maquina_modelo)
   if (!tipoMaquina) return { error: 'No se pudo determinar el tipo de máquina seleccionada.' }
 
   const tuvoProblemas = result.data.tuvo_problemas_tecnicos === 'si'
-  const canalRespuesta = encuesta.estado === 'necesidad_de_llamado' ? 'llamado' : 'mensaje'
 
-  const { error: errInsert } = await supabase.from('respuestas').insert({
-    encuesta_id:                       encuesta.id,
-    canal_respuesta:                   canalRespuesta,
-    nombre_apellido:                   result.data.nombre_apellido,
-    calle_numero:                      result.data.calle_numero,
-    piso_departamento:                 result.data.piso_departamento || null,
-    localidad:                         result.data.localidad,
-    codigo_postal:                     result.data.codigo_postal,
-    provincia:                         result.data.provincia,
-    email:                             result.data.email,
-    telefono:                          result.data.telefono,
-    concesionario_sede:                result.data.concesionario_sede,
-    maquina_modelo:                    result.data.maquina_modelo,
-    tipo_maquina:                      tipoMaquina,
-    nombre_firma_factura:              result.data.nombre_firma_factura,
-    calificacion_funcionamiento_anual: result.data.calificacion_funcionamiento_anual,
-    tuvo_problemas_tecnicos:           tuvoProblemas,
-    calificacion_resolucion_problemas: tuvoProblemas ? (result.data.calificacion_resolucion_problemas ?? null) : null,
-    comentario_problemas:              tuvoProblemas ? (result.data.comentario_problemas || null) : null,
-    nps_producto:                      result.data.nps_producto,
-    nps_empresa:                       result.data.nps_empresa,
-    nps_concesionario:                 result.data.nps_concesionario,
-    comentario_producto:               result.data.comentario_producto || null,
-    comentario_concesionario:          result.data.comentario_concesionario || null,
-    comentario_empresa:                result.data.comentario_empresa || null,
-    comentario_general:                null,
+  // Revalida el token e inserta en una sola transacción (el trigger actualiza encuesta.estado)
+  const guardado = await guardarRespuestaConToken(result.data.token, {
+    nombreApellido:                  result.data.nombre_apellido,
+    calleNumero:                     result.data.calle_numero,
+    pisoDepartamento:                result.data.piso_departamento || null,
+    localidad:                       result.data.localidad,
+    codigoPostal:                    result.data.codigo_postal,
+    provincia:                       result.data.provincia,
+    email:                           result.data.email,
+    telefono:                        result.data.telefono,
+    concesionarioSede:               result.data.concesionario_sede,
+    maquinaModelo:                   result.data.maquina_modelo,
+    tipoMaquina:                     tipoMaquina,
+    nombreFirmaFactura:              result.data.nombre_firma_factura,
+    calificacionFuncionamientoAnual: result.data.calificacion_funcionamiento_anual,
+    tuvoProblemasTecnicos:           tuvoProblemas,
+    calificacionResolucionProblemas: tuvoProblemas ? (result.data.calificacion_resolucion_problemas ?? null) : null,
+    comentarioProblemas:             tuvoProblemas ? (result.data.comentario_problemas || null) : null,
+    npsProducto:                     result.data.nps_producto,
+    npsEmpresa:                      result.data.nps_empresa,
+    npsConcesionario:                result.data.nps_concesionario,
+    comentarioProducto:              result.data.comentario_producto || null,
+    comentarioConcesionario:         result.data.comentario_concesionario || null,
+    comentarioEmpresa:               result.data.comentario_empresa || null,
+    comentarioGeneral:               null,
   })
 
-  if (errInsert) return { error: 'Error al guardar la respuesta. Por favor intentá nuevamente.' }
+  if (!guardado.ok) return { error: guardado.error }
 
   const { nps_producto, nps_empresa, nps_concesionario } = result.data
   const esNPSCritico = nps_producto <= 6 || nps_empresa <= 6 || nps_concesionario <= 6
   const nombre = result.data.nombre_apellido
   const concesionario = result.data.concesionario_sede
 
-  const campana = Array.isArray(encuesta.campanas) ? encuesta.campanas[0] : encuesta.campanas
-  const tipoEncuesta = Array.isArray(campana?.tipos_encuesta) ? campana.tipos_encuesta[0] : campana?.tipos_encuesta
-  const enviaRegalo = tipoEncuesta?.envia_regalo ?? false
+  const { enviaRegalo } = guardado
 
   try {
     const inserts: Promise<unknown>[] = [
-      Promise.resolve(supabase.from('notificaciones').insert({
+      db.insert(notificaciones).values({
         tipo: 'nueva_respuesta',
         titulo: 'Nueva respuesta recibida (Fin de Garantía)',
         mensaje: `${nombre} (${concesionario}) completó la encuesta de fin de garantía.`,
-        para_rol: 'admin',
+        paraRol: 'admin',
         metadata: { nombre, concesionario, tipo_encuesta: 'fin_garantia' },
-      })),
+      }),
     ]
 
     if (enviaRegalo) {
       inserts.push(
-        Promise.resolve(supabase.from('notificaciones').insert({
+        db.insert(notificaciones).values({
           tipo: 'regalo_pendiente',
           titulo: 'Nuevo regalo pendiente',
           mensaje: `${nombre} completó la encuesta. Hay un nuevo regalo pendiente de envío.`,
-          para_rol: 'rambla',
+          paraRol: 'rambla',
           metadata: { nombre, concesionario },
-        })),
+        }),
         enviarNotificacionRambla({
           nombreApellido: result.data.nombre_apellido,
           calleNumero: result.data.calle_numero,
@@ -175,18 +153,18 @@ export async function guardarRespuestaFinGarantiaAction(
       if (nps_concesionario <= 6) npsList.push(`Concesionario: ${nps_concesionario}`)
 
       inserts.push(
-        Promise.resolve(supabase.from('notificaciones').insert({
+        db.insert(notificaciones).values({
           tipo: 'nps_critico',
           titulo: 'NPS Crítico — Fin de Garantía',
           mensaje: `${nombre} — ${npsList.join(' · ')}`,
-          para_rol: 'admin',
+          paraRol: 'admin',
           metadata: { nombre, concesionario, tipo_encuesta: 'fin_garantia' },
-        }))
+        })
       )
 
       inserts.push(
         enviarAlertaNpsCritico({
-          encuestaId:            encuesta.id,
+          encuestaId:            guardado.encuestaId,
           npsProducto:           nps_producto,
           npsEmpresa:            nps_empresa,
           npsConcesionario:      nps_concesionario,
