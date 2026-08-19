@@ -15,7 +15,7 @@ Este documento es la fuente de verdad del **estado actual** de la migración. Se
 La migración reemplaza, en este orden:
 
 1. **Base de datos**: Postgres propio en la VPS, reemplazando el Postgres de Supabase.
-2. **Autenticación**: reemplaza Supabase Auth. En evaluación: NextAuth/Auth.js vs Better Auth (sin decidir todavía).
+2. **Autenticación**: reemplaza Supabase Auth con **Better Auth** (decidido 2026-08-19, ver sección 13).
 3. **Jobs automáticos**: los 2 jobs de `pg_cron` que existen hoy (`sync-encuestas-necesidad-llamado` cada 15 min, `check-campanas-sin-actividad` diario a las 9am UTC) pasan a ser endpoints de la app, disparados por cron a nivel de sistema operativo en la VPS.
 4. **RLS**: las políticas de Row Level Security de Supabase se reemplazan por validación en la capa de aplicación (patrón estándar en Next.js + Postgres self-hosted sin PostgREST) — es un cambio de modelo de seguridad consciente, no una omisión.
 
@@ -46,7 +46,7 @@ Todo el desarrollo de la migración se hace **en paralelo a producción, sin toc
 - [x] Elegir ORM/data-access layer: **Drizzle**, decidido y configurado (ver sección 9).
 - [x] Migrar `services/*.ts` módulo por módulo, reemplazando `supabase.from(...)` por queries propias (ver sección 10; queda `usuarios.service.ts` bloqueado por Auth).
 - [x] Migrar `src/app/encuesta/*` — formulario público (ver sección 12).
-- [ ] Definir y evaluar Auth (NextAuth vs Better Auth).
+- [x] Auth: **Better Auth** elegido e implementado (ver sección 13). Falta correr la migración de usuarios en producción durante el cutover.
 - [ ] Reemplazar los 2 jobs de `pg_cron` por endpoints + cron de sistema.
 - [ ] Definir estrategia de backups del Postgres de staging/producción con IT.
 - [ ] Cutover final: sync de datos, ventana de mantenimiento corta, merge de la PR, switch de env vars.
@@ -106,7 +106,7 @@ Patrón seguido en cada módulo: el `service.ts` cambia de motor por dentro (Sup
 - [x] `campanas` — service.ts completo, más `campanas/actions.ts` (que tenía lógica de negocio pesada viviendo fuera del service: alta completa de campaña y baja en cascada). Esta última parte ahora usa `db.transaction()` de Drizzle — mejora real sobre el comportamiento anterior con Supabase, que no podía agrupar los pasos en una transacción real y "deshacía a mano" si algo fallaba a mitad de camino (podía dejar filas huérfanas). Verificado con un caso de fallo forzado a mitad de transacción: revierte todo.
 - [x] `recordatorios` (`avisos.service.ts`, `recordatorios.service.ts`, `workflow.service.ts`) — relación encuesta→medidas (uno-a-muchos) resuelta con dos queries + merge en JS. `marcarRecordatorioEnviado` y `revertirEncuestaANecesidadLlamado` en transacción.
 - [x] `alertas` — enviarAlertaNpsCritico, enviarNotificacionRambla. De paso se migró el logging de email_errores en `src/lib/email/send-email.ts` (lib compartida fuera de cualquier módulo).
-- [ ] `configuracion` (ojo: `usuarios.service.ts` probablemente depende de Supabase Auth admin API — no migrable hasta decidir el reemplazo de Auth)
+- [x] `configuracion` — incluido `usuarios.service.ts`, que estuvo bloqueado hasta que se decidió Auth (ver sección 13).
 - [x] `plantillas`
 - [x] `rambla` — consulta la vista `v_respuestas_rambla` (Drizzle la trata como una tabla de solo lectura). De paso se migró actualizarRegaloEstadoAction/guardarSeguimientoAction en rambla/actions.ts.
 - [x] `whatsapp` — plantillas + jobs. `crearJob` en transacción (job + detalle por contacto). Bug propio encontrado y corregido: `.where()` encadenado dos veces no combina condiciones en Drizzle (pisa la anterior) — ver gotcha abajo.
@@ -214,3 +214,54 @@ Los envíos fallan con `ECONNREFUSED`, quedan registrados en `email_errores` (li
 ### Nota: `formData.get()` devuelve `null`, y `.optional()` de Zod no lo acepta
 
 Los campos de comentario son `z.string().optional()`. Si el campo no viene en el `FormData`, `formData.get()` devuelve `null` (no `undefined`) y Zod lo rechaza, haciendo fallar **toda** la validación con el mensaje genérico "Por favor completá todas las preguntas antes de enviar". En producción no pasa porque los `textarea` siempre existen en el DOM y mandan `''`. Es una fragilidad latente heredada, no introducida por la migración: si alguna vez se saca o renombra un campo del formulario, el síntoma va a ser un error confuso y global en vez de uno apuntando al campo. Al escribir pruebas, mandar todos los campos opcionales como `''`, igual que el form real.
+
+## 13. Auth: Better Auth (2026-08-19)
+
+Reemplaza Supabase Auth por completo. Después de esto **no queda ningún import de Supabase en `src/`** — se borraron `src/lib/supabase/{client,server,actions}.ts`.
+
+### Por qué Better Auth y no NextAuth/Auth.js
+
+La app necesita email/password (nada de OAuth), tres roles, ABM de usuarios y reset por email. Better Auth trae adapter de Drizzle, reset de contraseña y un plugin de admin que cubre `usuarios.service.ts` casi 1:1. NextAuth con credentials provider fuerza sesiones JWT (no de base) y no trae hash de contraseñas, ni reset, ni ABM: los tres había que escribirlos a mano.
+
+El punto decisivo fue el de las **sesiones en base**: el rol tiene que poder cambiar y tener efecto inmediato (es lo que daba Supabase con `app_metadata`), y con sesiones JWT eso implica esperar a que expire el token o inventar un mecanismo de invalidación.
+
+### Los 23 usuarios conservan su contraseña
+
+Supabase hashea con **bcrypt**, Better Auth usa **scrypt**. No alcanza con copiar los hashes: hay que enseñarle a verificar los dos formatos. `src/lib/auth/password.ts` intercepta los hashes que empiezan con `$2` y los verifica con bcrypt; todo lo demás va al verificador propio. Las contraseñas **nuevas** (altas y resets) siempre se hashean con scrypt — bcrypt queda de solo lectura, para lo heredado.
+
+`scripts/migrar-usuarios-auth.ts` mueve los usuarios: lee `auth.users` de Supabase y escribe `auth_user` + `auth_account` en el Postgres propio **en la misma corrida**, sin archivo intermedio ni salida por pantalla — los hashes nunca tocan el disco. Es idempotente (saltea los que ya existen), así que se puede volver a correr en el cutover para arrastrar altas de último momento. Simulacro por defecto; `--aplicar` para escribir.
+
+Simulacro contra producción: 23 usuarios, **los 23 con contraseña** — nadie queda obligado a resetear.
+
+### Dónde se autoriza ahora (cambio importante)
+
+Antes el middleware leía el rol del JWT y decidía todo. Better Auth guarda el rol en la base y el middleware corre en el **edge runtime**, donde no hay driver de Postgres. Así que:
+
+- **`src/middleware.ts`**: solo mira si **existe** la cookie de sesión. Es un filtro barato de primera pasada, no autorización. Pasa el pathname en el header `x-pathname`.
+- **`src/app/(dashboard)/layout.tsx`**: valida la sesión **contra la base** y aplica las reglas por rol. Es Server Component, así que puede. Todas las rutas del dashboard (incluida `/rambla`) cuelgan de este layout.
+- **`src/lib/auth/rutas.ts`**: las reglas por rol, en un solo lugar en vez de embebidas en el middleware.
+- Cada action sensible revalida igual con `requireRol()` — defensa en profundidad.
+
+**Esto arregla algo que antes no se validaba:** una cookie de sesión revocada o vencida ahora cae al login, porque la sesión se verifica contra la base en cada request en vez de confiar solo en la firma del token.
+
+### Gotchas encontrados
+
+- **El CLI de Better Auth está deprecado y quedó en 1.4.x** mientras el core va en 1.7.1. Generar el schema con él habría omitido campos nuevos. El schema de `supabase/migrations/20260819000000_better_auth_tables.sql` se derivó de `getSchema()` del paquete instalado, que es autoritativo para la versión real. **Si se actualiza better-auth, volver a derivarlo y comparar.**
+- **`auth_account.issuer` tiene que valer `'local:credential'`**, no `'credential'`. Con el valor equivocado el login falla con *"User not found"* — sin error de tipos, sin warning. Se descubrió comparando una fila creada por Better Auth contra una insertada a mano.
+- **`user` es palabra reservada en Postgres.** Las tablas llevan prefijo `auth_` (`auth_user`, `auth_session`, ...) vía `modelName` en la config, para no arrastrar comillas por todo el código.
+- **El adapter de Drizzle busca las tablas por la clave del objeto de schema**, y esa clave tiene que coincidir con el `modelName` (`auth_user`, no `authUser`). Por eso `src/lib/db/auth-schema.ts` exporta ambos alias. Falla en runtime, no al compilar.
+- **Los `id` son `TEXT`, no `UUID`** — es el tipo nativo de Better Auth. Los usuarios migrados guardan su UUID de Supabase como texto, así que conservan su id de siempre.
+- `auth-schema.ts` se escribió **a mano**, no con `drizzle-kit pull`, para que regenerar el schema principal no lo pise ni al revés.
+
+### Verificación
+
+- 12 asserts sobre el core: alta y login con scrypt, y el caso que decidía todo — **un hash bcrypt estilo Supabase inicia sesión bien**, conservando UUID y rol.
+- 30 asserts sobre ABM de usuarios y reglas de acceso de los tres roles, incluido el `ON DELETE CASCADE` que cierra sesiones al borrar un usuario.
+- **Smoke test por HTTP contra el build de producción** (lo único que valida middleware + layout + cookies juntos): sin sesión redirige al login; un usuario `rambla` queda encerrado en `/rambla` (`/`, `/configuracion`, `/campanas`, `/clientes` y `/nps` lo devuelven a `/rambla`); contraseña incorrecta da 401; logout revoca de verdad; y un login desde un origen ajeno da 403 por CSRF.
+
+### Pendiente de esta fase
+
+- [ ] Correr `scripts/migrar-usuarios-auth.ts --aplicar` contra staging para probar con los 23 usuarios reales (hasta ahora se probó con usuarios sintéticos).
+- [ ] Re-agregar las FKs a usuarios que quedaron sueltas desde el inicio de la migración: `encuestas.marcado_sin_respuesta_por` y `encuesta_medidas.created_by` son `UUID` sin constraint, y ahora existe `auth_user(id)` a la que apuntar. **Ojo con los tipos**: esas columnas son `UUID` y `auth_user.id` es `TEXT`, así que hay que convertirlas.
+- [ ] Sacar `@supabase/ssr` y `@supabase/supabase-js` de `package.json` (ya no los importa nadie; `src/types/database.types.ts` se sigue usando solo para tipos, no tiene dependencia en runtime).
+- [ ] Definir `BETTER_AUTH_SECRET` y `BETTER_AUTH_URL` en el entorno de producción durante el cutover. **Si `BETTER_AUTH_SECRET` cambia, todas las sesiones abiertas se invalidan** — no regenerarlo por accidente entre deploys.
