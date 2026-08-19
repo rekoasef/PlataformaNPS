@@ -2,7 +2,6 @@
 
 import { revalidatePath } from 'next/cache'
 import { z } from 'zod'
-import { createSupabaseServer } from '@/lib/supabase/server'
 import {
   actualizarMedidaLlamado,
   agregarMedidaLlamado,
@@ -10,6 +9,7 @@ import {
   marcarEncuestaSinRespuesta,
   revertirEncuestaANecesidadLlamado,
 } from '@/modules/recordatorios/services/recordatorios.service'
+import { getUsuarioActual } from '@/lib/auth/session'
 
 type ActionState = { error?: string; success?: boolean }
 
@@ -66,9 +66,7 @@ export async function agregarMedidaAction(
     return { error: parsed.error.issues[0]?.message ?? 'Datos inválidos.' }
   }
 
-  const supabase = await createSupabaseServer()
-  const { data: userData } = await supabase.auth.getUser()
-  const creadoPor = userData.user?.id ?? null
+  const creadoPor = (await getUsuarioActual())?.id ?? null
 
   try {
     await agregarMedidaLlamado(parsed.data.encuestaId, parsed.data.comentario, creadoPor)
@@ -140,9 +138,7 @@ export async function marcarSinRespuestaAction(
     return { error: parsed.error.issues[0]?.message ?? 'Datos inválidos.' }
   }
 
-  const supabase = await createSupabaseServer()
-  const { data: userData } = await supabase.auth.getUser()
-  const marcadoPor = userData.user?.id ?? null
+  const marcadoPor = (await getUsuarioActual())?.id ?? null
 
   try {
     await marcarEncuestaSinRespuesta(parsed.data.encuestaId, parsed.data.comentario, marcadoPor)
@@ -169,9 +165,7 @@ export async function revertirNecesidadLlamadoAction(
     return { error: parsed.error.issues[0]?.message ?? 'Datos inválidos.' }
   }
 
-  const supabase = await createSupabaseServer()
-  const { data: userData } = await supabase.auth.getUser()
-  const revertidoPor = userData.user?.id ?? null
+  const revertidoPor = (await getUsuarioActual())?.id ?? null
 
   try {
     await revertirEncuestaANecesidadLlamado(

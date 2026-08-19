@@ -1,6 +1,13 @@
 import NuevaPasswordForm from './NuevaPasswordForm'
 
-export default function NuevaPasswordPage() {
+interface Props {
+  searchParams: Promise<{ token?: string }>
+}
+
+export default async function NuevaPasswordPage({ searchParams }: Props) {
+  // Better Auth manda el token como query param del link del mail.
+  const { token } = await searchParams
+
   return (
     <div className="flex min-h-screen items-center justify-center bg-gray-50 px-4">
       <div className="w-full max-w-sm rounded-2xl border border-gray-200/80 bg-white shadow-2xl shadow-gray-200/60">
@@ -20,7 +27,7 @@ export default function NuevaPasswordPage() {
             </p>
           </div>
 
-          <NuevaPasswordForm />
+          <NuevaPasswordForm token={token ?? ''} />
         </div>
       </div>
     </div>

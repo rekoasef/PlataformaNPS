@@ -6,18 +6,17 @@ import TiposEncuestaPanel from '@/modules/configuracion/components/TiposEncuesta
 import ConfigTabs from '@/modules/configuracion/components/ConfigTabs'
 import { getSystemConfig, getTiposEncuesta } from '@/modules/configuracion/services/configuracion.service'
 import { listUsers } from '@/modules/configuracion/services/usuarios.service'
-import { createSupabaseServer } from '@/lib/supabase/server'
+import { getUsuarioActual } from '@/lib/auth/session'
 
 export default async function ConfiguracionPage() {
-  const [config, tiposEncuesta, users, supabase] = await Promise.all([
+  const [config, tiposEncuesta, users, usuarioActual] = await Promise.all([
     getSystemConfig(),
     getTiposEncuesta(),
     listUsers(),
-    createSupabaseServer(),
+    getUsuarioActual(),
   ])
 
-  const { data: { user } } = await supabase.auth.getUser()
-  const currentUserId = user?.id ?? ''
+  const currentUserId = usuarioActual?.id ?? ''
 
   return (
     <PageContainer title="Configuración">

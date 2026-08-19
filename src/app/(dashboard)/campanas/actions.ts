@@ -1,7 +1,6 @@
 'use server'
 
 import { z } from 'zod'
-import { createSupabaseServer } from '@/lib/supabase/server'
 import { db } from '@/lib/db/client'
 import {
   campanas,
@@ -17,6 +16,7 @@ import { updateCampanaEstado } from '@/modules/campanas/services/campanas.servic
 import { parseClientesCSV } from '@/lib/utils/csv'
 import { revalidatePath } from 'next/cache'
 import { redirect } from 'next/navigation'
+import { requireRol } from '@/lib/auth/session'
 
 // Errores de validación de negocio que sí queremos mostrarle al usuario tal
 // cual (a diferencia de errores técnicos de Postgres/Drizzle, que no deben
@@ -24,11 +24,7 @@ import { redirect } from 'next/navigation'
 class ActionError extends Error {}
 
 async function getRoleOrThrow() {
-  const supabase = await createSupabaseServer()
-  const { data: { user } } = await supabase.auth.getUser()
-  if (!user) throw new Error('No autorizado')
-  const role = user.app_metadata?.role as string | undefined
-  if (role && role !== 'admin') throw new Error('No autorizado')
+  await requireRol('admin')
 }
 
 const CampanaSchema = z.object({

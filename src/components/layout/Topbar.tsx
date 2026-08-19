@@ -1,5 +1,5 @@
 import { LogOut } from 'lucide-react'
-import { logoutAction } from '@/lib/supabase/actions'
+import { logoutAction } from '@/lib/auth/actions'
 import { cn } from '@/lib/utils/cn'
 import MobileMenuButton from '@/components/layout/MobileMenuButton'
 import NotificacionesBell from '@/modules/notificaciones/components/NotificacionesBell'

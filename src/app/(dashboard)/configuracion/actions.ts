@@ -2,7 +2,6 @@
 
 import { z } from 'zod'
 import { revalidatePath } from 'next/cache'
-import { createSupabaseServer } from '@/lib/supabase/server'
 import { sendEmail } from '@/lib/email/send-email'
 import { buildTestEmailTemplate } from '@/lib/email/templates/test-email'
 import { buildRamblaRegaloTemplate } from '@/lib/email/templates/rambla-regalo'
@@ -11,12 +10,11 @@ import {
   updateSystemConfig,
   updateEnviaRegalo,
 } from '@/modules/configuracion/services/configuracion.service'
+import { getUsuarioActual } from '@/lib/auth/session'
 
 async function requireAdmin() {
-  const supabase = await createSupabaseServer()
-  const { data: { user } } = await supabase.auth.getUser()
-  const role = user?.app_metadata?.role as string | undefined
-  if (!user || role !== 'admin') {
+  const usuario = await getUsuarioActual()
+  if (usuario?.role !== 'admin') {
     throw new Error('Solo los administradores pueden modificar esta configuración.')
   }
 }

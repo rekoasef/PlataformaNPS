@@ -1,18 +1,16 @@
-import { createSupabaseServer } from '@/lib/supabase/server'
 import { db } from '@/lib/db/client'
 import { campanas, clientes, encuestas } from '@/lib/db/schema'
 import { and, eq, inArray } from 'drizzle-orm'
 import { generarCSVPendientes } from '@/lib/utils/exportar'
 import { NextResponse } from 'next/server'
+import { getUsuarioActual } from '@/lib/auth/session'
 
 export async function GET(
   _request: Request,
   { params }: { params: Promise<{ id: string }> }
 ) {
   // Verificar autenticación
-  const supabaseAuth = await createSupabaseServer()
-  const { data: { user } } = await supabaseAuth.auth.getUser()
-  if (!user) {
+  if (!(await getUsuarioActual())) {
     return NextResponse.json({ error: 'No autorizado' }, { status: 401 })
   }
 

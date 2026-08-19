@@ -5,11 +5,13 @@ import { actualizarPasswordAction } from './actions'
 
 const initialState: { error?: string } = {}
 
-export default function NuevaPasswordForm() {
+export default function NuevaPasswordForm({ token }: { token: string }) {
   const [state, formAction, isPending] = useActionState(actualizarPasswordAction, initialState)
 
   return (
     <form action={formAction} className="space-y-5">
+      {/* Better Auth identifica el pedido de reset con este token (viene en el link del mail) */}
+      <input type="hidden" name="token" value={token} />
       <div className="space-y-1.5">
         <label htmlFor="password" className="block text-sm font-medium text-gray-700">
           Nueva contraseña

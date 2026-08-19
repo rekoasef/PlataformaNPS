@@ -1,86 +1,41 @@
-import { createServerClient } from '@supabase/ssr'
 import { NextResponse, type NextRequest } from 'next/server'
+import { getSessionCookie } from 'better-auth/cookies'
 
-// Extrae el project ref de la URL para identificar los chunks de cookies de Supabase
-// ej: "https://pkjnkmjunpmnzjtpyzyk.supabase.co" → "pkjnkmjunpmnzjtpyzyk"
-const SUPABASE_PROJECT_REF = process.env.NEXT_PUBLIC_SUPABASE_URL!
-  .replace('https://', '')
-  .split('.')[0]
-const STALE_CHUNK_RE = new RegExp(`^sb-${SUPABASE_PROJECT_REF}-auth-token\\.\\d+$`)
+/**
+ * Guarda de rutas.
+ *
+ * Acá solo se mira **si hay cookie de sesión**, no se valida contra la base: el
+ * middleware corre en el edge runtime, donde no hay driver de Postgres. La
+ * verificación real (sesión vigente + rol) la hace cada página/action con
+ * `getUsuarioActual()`, que sí consulta la base — el middleware es un filtro
+ * barato de primera pasada, no la autorización.
+ *
+ * Por eso las reglas por rol viven en el layout del dashboard y en cada action,
+ * no acá: el rol no viaja en la cookie.
+ */
+
+const RUTAS_PUBLICAS = ['/login', '/encuesta', '/nueva-password', '/api/auth']
 
 export async function middleware(request: NextRequest) {
-  let supabaseResponse = NextResponse.next({ request })
-
-  // Registra qué cookies escribe Supabase en este ciclo para detectar chunks obsoletos
-  const freshCookieNames = new Set<string>()
-
-  const supabase = createServerClient(
-    process.env.NEXT_PUBLIC_SUPABASE_URL!,
-    process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,
-    {
-      cookies: {
-        getAll() {
-          return request.cookies.getAll()
-        },
-        setAll(cookiesToSet) {
-          cookiesToSet.forEach(({ name, value }) => {
-            request.cookies.set(name, value)
-            freshCookieNames.add(name)
-          })
-          supabaseResponse = NextResponse.next({ request })
-          cookiesToSet.forEach(({ name, value, options }) =>
-            supabaseResponse.cookies.set(name, value, options)
-          )
-        },
-      },
-    }
-  )
-
-  const { data: { user } } = await supabase.auth.getUser()
-
-  // Elimina chunks de auth viejos que ya no forman parte de la sesión actual.
-  // Esto previene el error HTTP 431 (Request Header Fields Too Large) cuando
-  // se acumulan chunks obsoletos en el browser del usuario.
-  for (const cookie of request.cookies.getAll()) {
-    if (STALE_CHUNK_RE.test(cookie.name) && !freshCookieNames.has(cookie.name)) {
-      supabaseResponse.cookies.delete(cookie.name)
-    }
-  }
-  const role = user?.app_metadata?.role as string | undefined
-
   const { pathname } = request.nextUrl
-  const isPublic =
-    pathname.startsWith('/login') ||
-    pathname.startsWith('/encuesta') ||
-    pathname.startsWith('/auth/callback') ||
-    pathname.startsWith('/nueva-password')
 
-  if (!isPublic && !user) {
-    return NextResponse.redirect(new URL('/login', request.url))
+  const esPublica = RUTAS_PUBLICAS.some((r) => pathname.startsWith(r))
+  const tieneSesion = getSessionCookie(request) !== null
+
+  if (!esPublica && !tieneSesion) {
+    const destino = new URL('/login', request.url)
+    return NextResponse.redirect(destino)
   }
 
-  // Usuarios Rambla: solo pueden acceder a /rambla
-  if (user && role === 'rambla' && !pathname.startsWith('/rambla')) {
-    return NextResponse.redirect(new URL('/rambla', request.url))
+  if (pathname === '/login' && tieneSesion) {
+    return NextResponse.redirect(new URL('/', request.url))
   }
 
-  // Usuarios Fábrica: solo pueden acceder a las rutas de visualización (Principal)
-  const FABRICA_ALLOWED = ['/', '/nps', '/respuestas']
-  if (user && role === 'fabrica') {
-    const allowed = FABRICA_ALLOWED.some((r) =>
-      r === '/' ? pathname === '/' : pathname.startsWith(r)
-    )
-    if (!allowed) {
-      return NextResponse.redirect(new URL('/', request.url))
-    }
-  }
-
-  if (pathname === '/login' && user) {
-    const dest = role === 'rambla' ? '/rambla' : '/'
-    return NextResponse.redirect(new URL(dest, request.url))
-  }
-
-  return supabaseResponse
+  // El layout del dashboard necesita saber qué ruta se pidió para aplicar las
+  // reglas por rol; un Server Component no tiene acceso al pathname de otro modo.
+  const headers = new Headers(request.headers)
+  headers.set('x-pathname', pathname)
+  return NextResponse.next({ request: { headers } })
 }
 
 export const config = {

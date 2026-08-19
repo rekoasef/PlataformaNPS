@@ -1,10 +1,9 @@
 'use server'
 
-import { createSupabaseServer, createSupabaseAdmin } from '@/lib/supabase/server'
 import { redirect } from 'next/navigation'
 import { headers } from 'next/headers'
-import { sendEmail } from '@/lib/email/send-email'
-import { buildRecuperarPasswordTemplate } from '@/lib/email/templates/recuperar-password'
+import { APIError } from 'better-auth/api'
+import { auth } from '@/lib/auth'
 
 type LoginState = { error?: string }
 
@@ -12,14 +11,22 @@ export async function loginAction(
   _prevState: LoginState,
   formData: FormData
 ): Promise<LoginState> {
-  const email = formData.get('email') as string
+  const email = (formData.get('email') as string)?.trim().toLowerCase()
   const password = formData.get('password') as string
 
-  const supabase = await createSupabaseServer()
-  const { error } = await supabase.auth.signInWithPassword({ email, password })
+  if (!email || !password) {
+    return { error: 'Ingresá tu email y contraseña.' }
+  }
 
-  if (error) {
-    return { error: 'Credenciales incorrectas. Verificá tu email y contraseña.' }
+  try {
+    // Verifica tanto los hashes bcrypt heredados de Supabase como los propios
+    // (ver src/lib/auth/password.ts), así nadie tuvo que cambiar su contraseña.
+    await auth.api.signInEmail({ body: { email, password }, headers: await headers() })
+  } catch (error) {
+    if (error instanceof APIError) {
+      return { error: 'Credenciales incorrectas. Verificá tu email y contraseña.' }
+    }
+    throw error
   }
 
   redirect('/')
@@ -38,32 +45,16 @@ export async function solicitarRecuperacionAction(
   const headersList = await headers()
   const host = headersList.get('host') ?? 'localhost:3000'
   const proto = host.startsWith('localhost') ? 'http' : 'https'
-  const redirectTo = `${proto}://${host}/auth/callback?next=/nueva-password`
-
-  const admin = createSupabaseAdmin()
-  const { data, error } = await admin.auth.admin.generateLink({
-    type: 'recovery',
-    email,
-    options: { redirectTo },
-  })
-
-  if (error) {
-    console.error('[recuperar-password] generateLink error:', error.message)
-    return { success: true }
-  }
-
-  if (!data?.properties?.action_link) {
-    console.error('[recuperar-password] generateLink: no action_link en la respuesta', data)
-    return { success: true }
-  }
-
-  const template = buildRecuperarPasswordTemplate(data.properties.action_link)
 
   try {
-    await sendEmail({ to: email, ...template })
-    console.log('[recuperar-password] email enviado a', email)
-  } catch (err) {
-    console.error('[recuperar-password] sendEmail error:', err)
+    // El mail lo manda `sendResetPassword` de la config de Better Auth.
+    await auth.api.requestPasswordReset({
+      body: { email, redirectTo: `${proto}://${host}/nueva-password` },
+      headers: headersList,
+    })
+  } catch (error) {
+    // Nunca se revela si el email existe o no: siempre se responde igual.
+    console.error('[recuperar-password] error:', error)
   }
 
   return { success: true }

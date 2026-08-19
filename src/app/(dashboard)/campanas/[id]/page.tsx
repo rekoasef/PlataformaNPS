@@ -7,13 +7,13 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@
 import CambiarEstadoForm from '@/modules/campanas/components/CambiarEstadoForm'
 import EliminarCampanaForm from '@/modules/campanas/components/EliminarCampanaForm'
 import EliminarEncuestaForm from '@/modules/campanas/components/EliminarEncuestaForm'
-import { createSupabaseServer } from '@/lib/supabase/server'
 import RecordatoriosTimeline from '@/modules/recordatorios/components/RecordatoriosTimeline'
 import { getRecordatoriosByCampana, puedeCrearRecordatorio } from '@/modules/recordatorios/services/recordatorios.service'
 import { formatTecnologia } from '@/lib/utils/tecnologia'
 import CopyButton from '@/components/ui/CopyButton'
 import WhatsappCampanaSection from '@/modules/whatsapp/components/WhatsappCampanaSection'
 import { getJobsByCampana, getPlantillas } from '@/modules/whatsapp/services/whatsapp.service'
+import { getUsuarioActual } from '@/lib/auth/session'
 
 const estadoBadge: Record<string, 'success' | 'info' | 'default'> = {
   activa:     'success',
@@ -37,9 +37,8 @@ export default async function CampanaDetallePage({
   params: Promise<{ id: string }>
 }) {
   const { id } = await params
-  const supabase = await createSupabaseServer()
-  const [{ data: { user } }, campana, encuestas, recordatorios, permisoRecordatorio, jobsWA, plantillasWA] = await Promise.all([
-    supabase.auth.getUser(),
+  const [usuario, campana, encuestas, recordatorios, permisoRecordatorio, jobsWA, plantillasWA] = await Promise.all([
+    getUsuarioActual(),
     getCampanaById(id).catch(() => null),
     getCampanaConEncuestas(id),
     getRecordatoriosByCampana(id),
@@ -47,7 +46,7 @@ export default async function CampanaDetallePage({
     getJobsByCampana(id),
     getPlantillas(),
   ])
-  const esAdmin = ((user?.app_metadata?.role as string | undefined) ?? 'admin') === 'admin'
+  const esAdmin = usuario?.role === 'admin'
 
   if (!campana) notFound()
 

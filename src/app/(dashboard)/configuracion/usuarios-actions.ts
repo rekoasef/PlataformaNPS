@@ -2,24 +2,22 @@
 
 import { z } from 'zod'
 import { revalidatePath } from 'next/cache'
-import { createSupabaseServer } from '@/lib/supabase/server'
 import {
   createUser,
   updateUserRole,
   deleteUser,
   type UserRole,
 } from '@/modules/configuracion/services/usuarios.service'
+import { getUsuarioActual } from '@/lib/auth/session'
 
 type ActionState = { error?: string; success?: boolean }
 
 async function requireAdmin() {
-  const supabase = await createSupabaseServer()
-  const { data: { user } } = await supabase.auth.getUser()
-  const role = user?.app_metadata?.role as string | undefined
-  if (!user || role !== 'admin') {
+  const usuario = await getUsuarioActual()
+  if (usuario?.role !== 'admin') {
     throw new Error('Solo los administradores pueden gestionar usuarios.')
   }
-  return user
+  return usuario
 }
 
 const CreateUserSchema = z.object({

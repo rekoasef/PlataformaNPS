@@ -1,4 +1,4 @@
-import { logoutAction } from '@/lib/supabase/actions'
+import { logoutAction } from '@/lib/auth/actions'
 
 export default function Header() {
   return (

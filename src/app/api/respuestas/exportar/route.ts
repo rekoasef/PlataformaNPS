@@ -1,17 +1,12 @@
 import { NextResponse } from 'next/server'
-import { createSupabaseServer } from '@/lib/supabase/server'
 import { generarCSVRespuestas } from '@/lib/utils/exportar'
 import { formatTecnologia, normalizeTecnologiaInput } from '@/lib/utils/tecnologia'
 import { getRespuestas } from '@/modules/dashboard/services/dashboard.service'
 import { normalizeNpsAnswerStatus, normalizeNpsDimension } from '@/modules/dashboard/utils/nps'
+import { getUsuarioActual } from '@/lib/auth/session'
 
 export async function GET(request: Request) {
-  const supabase = await createSupabaseServer()
-  const {
-    data: { user },
-  } = await supabase.auth.getUser()
-
-  if (!user) {
+  if (!(await getUsuarioActual())) {
     return NextResponse.json({ error: 'No autorizado' }, { status: 401 })
   }
 

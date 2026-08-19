@@ -1,16 +1,12 @@
 'use server'
 
 import { revalidatePath } from 'next/cache'
-import { createSupabaseServer } from '@/lib/supabase/server'
 import type { RegaloEstado, RamblaFiltros, RespuestaRambla } from '@/modules/rambla/types/rambla.types'
 import { actualizarRegaloEstado, exportarRespuestasRambla, guardarSeguimiento } from '@/modules/rambla/services/rambla.service'
+import { requireRol } from '@/lib/auth/session'
 
 async function getRoleOrThrow() {
-  const supabase = await createSupabaseServer()
-  const { data: { user } } = await supabase.auth.getUser()
-  if (!user) throw new Error('No autorizado')
-  const role = user.app_metadata?.role as string | undefined
-  if (role && role !== 'admin' && role !== 'rambla') throw new Error('No autorizado')
+  await requireRol('rambla')
 }
 
 export async function actualizarRegaloEstadoAction(
