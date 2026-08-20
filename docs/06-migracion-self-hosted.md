@@ -46,7 +46,7 @@ Todo el desarrollo de la migración se hace **en paralelo a producción, sin toc
 - [x] Elegir ORM/data-access layer: **Drizzle**, decidido y configurado (ver sección 9).
 - [x] Migrar `services/*.ts` módulo por módulo, reemplazando `supabase.from(...)` por queries propias (ver sección 10; queda `usuarios.service.ts` bloqueado por Auth).
 - [x] Migrar `src/app/encuesta/*` — formulario público (ver sección 12).
-- [x] Auth: **Better Auth** elegido e implementado (ver sección 13). Falta correr la migración de usuarios en producción durante el cutover y aplicar `20260820000000_fks_auth_user.sql` a staging (bloqueado por el túnel SSH).
+- [x] Auth: **Better Auth** elegido e implementado, y las FKs a `auth_user` reconectadas (ver sección 13). Falta correr la migración de usuarios en producción durante el cutover.
 - [ ] Reemplazar los 2 jobs de `pg_cron` por endpoints + cron de sistema.
 - [ ] Definir estrategia de backups del Postgres de staging/producción con IT.
 - [ ] Cutover final: sync de datos, ventana de mantenimiento corta, merge de la PR, switch de env vars.
@@ -263,7 +263,7 @@ Antes el middleware leía el rol del JWT y decidía todo. Better Auth guarda el 
 ### Pendiente de esta fase
 
 - [x] Correr `scripts/migrar-usuarios-auth.ts --aplicar` contra staging — 23/23 migrados, todos con `issuer='local:credential'`, hash bcrypt y su UUID original. Login con contraseña real verificado.
-- [x] Re-agregar las FKs a usuarios que quedaron sueltas desde el inicio de la migración (ver más abajo). **Falta aplicar la migración a staging** — bloqueado por el túnel SSH.
+- [x] Re-agregar las FKs a usuarios que quedaron sueltas desde el inicio de la migración, y aplicarlas a staging (ver más abajo).
 - [x] Sacar `@supabase/ssr` y `@supabase/supabase-js` de `package.json` (`src/types/database.types.ts` se sigue usando solo para tipos, no tiene dependencia en runtime).
 - [ ] Definir `BETTER_AUTH_SECRET` y `BETTER_AUTH_URL` en el entorno de producción durante el cutover. **Si `BETTER_AUTH_SECRET` cambia, todas las sesiones abiertas se invalidan** — no regenerarlo por accidente entre deploys.
 
@@ -315,7 +315,16 @@ Probada contra una copia local del schema de staging (`combined_selfhosted.sql` 
 - **10 asserts a través de los servicios reales** (`marcarEncuestaSinRespuesta`, `agregarMedidaLlamado`, `revertirEncuestaANecesidadLlamado`) apuntando a esa base: la FK rechaza un autor inexistente, la transacción de revertir sigue funcionando, y borrar el usuario deja las 3 medidas en pie sin autor.
 - `npx drizzle-kit pull` contra esa base genera exactamente las mismas definiciones de columna que se editaron a mano en `schema.ts` (`text(...)` y `text_ops`).
 
-**Falta aplicarla a staging**: requiere el túnel SSH, que necesita la passphrase de `id_ed25519_rasef_vps`.
+**Aplicada a staging el 2026-08-20.** Antes de aplicar se contaron las referencias: 4 en `encuestas` y 1 en `encuesta_medidas`, **0 huérfanas**, así que no se perdió nada de auditoría. Después:
+
+- Las dos columnas son `TEXT`, las dos FKs existen con `ON DELETE SET NULL`, y los índices parciales siguen ahí.
+- Las 5 referencias resuelven por JOIN contra un usuario real (`lcarrizo@crucianelli.com`).
+- `drizzle-kit pull` contra staging devuelve un `schema.ts` **idéntico** al del repo — las 22 definiciones, FKs incluidas. Las diferencias en `relations.ts` son solo orden de claves dentro de los objetos (`pull` no es determinístico en eso; una de ellas, `campanasRelations`, ya venía así).
+- Round-trip por el adapter de Better Auth contra staging (alta, login, baja) para confirmar que registrar `auth-schema` en el cliente de Drizzle no lo afectó: 5 asserts, y staging vuelve a sus 23 usuarios.
+
+#### `auth-schema` también va en el cliente de Drizzle
+
+Las relaciones nuevas apuntan a `authUser`, pero `client.ts` solo registraba `schema` + `relations`, y `authUser` vive en `auth-schema.ts`. Con la tabla sin registrar, cualquier `db.query.*` que use esas relaciones **revienta en runtime** con `Cannot read properties of undefined (reading 'columns')` — no lo agarra el compilador. Hoy no lo notaba nadie porque toda la app usa el builder (`db.select()`) y no hay un solo `db.query.*` en `src/`, así que `relations.ts` estaba de adorno. Se agregó `...authSchema` al `drizzle()` de `client.ts`; el adapter de Better Auth no se toca, recibe su schema por separado.
 
 ### Hallazgo para el cutover: `mensajes.py` todavía habla con Supabase
 
