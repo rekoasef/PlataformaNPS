@@ -106,4 +106,20 @@ En el crontab se ponen antes del comando: `NPS_PG_CONTAINER=... /usr/local/bin/n
   inválido → exit 64, contenedor inexistente → loguea el error y sale distinto de 0,
   dos corridas simultáneas → la segunda se saltea por el `flock`, y el log muestra
   `ok -> 1` cuando hay cambios y `ok -> 0` cuando no.
-- **Sin probar**: la instalación en la VPS (crontab de root, permisos, `CRON_TZ`).
+- **Ensayo en la VPS (2026-08-20)**: el script corrió contra staging desde la VPS de verdad
+  (sin root, ver abajo) y logueó `[sync] ok -> 0` y `[notificaciones] ok`. `sync -> 0` es el
+  resultado correcto: no hay encuestas en `recordatorio_enviado` en staging. Y como
+  `check_campanas_sin_actividad()` no devuelve valor, se confirmó su efecto en la base:
+  **insertó las 6 notificaciones** esperadas. Quedaron en staging a propósito, como evidencia
+  del ensayo.
+- **Sin probar todavía**: el crontab de root y `CRON_TZ` — necesitan la contraseña de `posventa`,
+  pendiente de que IT la resetee.
+
+## Nota sobre permisos (2026-08-20)
+
+En el ensayo apareció que el usuario `posventa` está en el grupo `docker`
+(`groups=1001(posventa),990(docker)`), así que `docker exec` anda **sin sudo**. Eso permitió
+hacer el ensayo sin root, pero **contradice la decisión de acceso documentada** (sección 5 del
+doc de migración): se había descartado el grupo `docker` justamente porque equivale a root en el
+host y no deja auditoría individual. Consultado con IT; hasta que se resuelva, el crontab va
+igual en el de root, que es lo correcto independientemente de esto.
