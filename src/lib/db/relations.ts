@@ -1,5 +1,8 @@
 import { relations } from "drizzle-orm/relations";
 import { clientes, envios, campanas, encuestas, respuestas, tiposEncuesta, enviosWhatsappJobs, plantillasWhatsapp, enviosWhatsappDetalle, encuestaMedidas } from "./schema";
+// Igual que en `schema.ts`: `authUser` no sale del `pull` (tablesFilter excluye auth_*),
+// pero las relaciones que lo referencian sí. Re-agregar este import al regenerar.
+import { authUser } from "./auth-schema";
 
 export const enviosRelations = relations(envios, ({one}) => ({
 	cliente: one(clientes, {
@@ -46,6 +49,15 @@ export const encuestasRelations = relations(encuestas, ({one, many}) => ({
 	}),
 	enviosWhatsappDetalles: many(enviosWhatsappDetalle),
 	encuestaMedidas: many(encuestaMedidas),
+	authUser: one(authUser, {
+		fields: [encuestas.marcadoSinRespuestaPor],
+		references: [authUser.id]
+	}),
+}));
+
+export const authUserRelations = relations(authUser, ({many}) => ({
+	encuestas: many(encuestas),
+	encuestaMedidas: many(encuestaMedidas),
 }));
 
 export const tiposEncuestaRelations = relations(tiposEncuesta, ({many}) => ({
@@ -83,5 +95,9 @@ export const encuestaMedidasRelations = relations(encuestaMedidas, ({one}) => ({
 	encuesta: one(encuestas, {
 		fields: [encuestaMedidas.encuestaId],
 		references: [encuestas.id]
+	}),
+	authUser: one(authUser, {
+		fields: [encuestaMedidas.createdBy],
+		references: [authUser.id]
 	}),
 }));

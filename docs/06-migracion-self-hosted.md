@@ -46,7 +46,7 @@ Todo el desarrollo de la migración se hace **en paralelo a producción, sin toc
 - [x] Elegir ORM/data-access layer: **Drizzle**, decidido y configurado (ver sección 9).
 - [x] Migrar `services/*.ts` módulo por módulo, reemplazando `supabase.from(...)` por queries propias (ver sección 10; queda `usuarios.service.ts` bloqueado por Auth).
 - [x] Migrar `src/app/encuesta/*` — formulario público (ver sección 12).
-- [x] Auth: **Better Auth** elegido e implementado (ver sección 13). Falta correr la migración de usuarios en producción durante el cutover.
+- [x] Auth: **Better Auth** elegido e implementado (ver sección 13). Falta correr la migración de usuarios en producción durante el cutover y aplicar `20260820000000_fks_auth_user.sql` a staging (bloqueado por el túnel SSH).
 - [ ] Reemplazar los 2 jobs de `pg_cron` por endpoints + cron de sistema.
 - [ ] Definir estrategia de backups del Postgres de staging/producción con IT.
 - [ ] Cutover final: sync de datos, ventana de mantenimiento corta, merge de la PR, switch de env vars.
@@ -159,8 +159,9 @@ Se eligió **Drizzle** como data-access layer (en vez de Prisma o queries crudas
 
 **Setup:**
 - `drizzle-orm` + driver `postgres` (postgres.js) como dependencias de producción; `drizzle-kit` + `dotenv` como dev dependencies (herramientas de CLI, no corren en producción).
-- `drizzle.config.ts` en la raíz: config que usa `drizzle-kit` para tareas de CLI (lee `.env.staging` vía el túnel SSH a staging).
+- `drizzle.config.ts` en la raíz: config que usa `drizzle-kit` para tareas de CLI (lee `.env.staging` vía el túnel SSH a staging). El puerto local del túnel sale de `STAGING_TUNNEL_PORT` (default **5434**, ver el gotcha del puerto 5433 en la sección 6) y `tablesFilter: ['!auth_*']` evita que un `pull` traiga las tablas de Better Auth a `schema.ts` y queden definidas dos veces con `auth-schema.ts`.
 - `src/lib/db/schema.ts` y `src/lib/db/relations.ts`: generados por **introspección** (`npx drizzle-kit pull`), leyendo el schema real de staging — no se escribieron a mano. Para regenerarlos después de un cambio de schema, correr `npx drizzle-kit pull` de nuevo (requiere el túnel SSH a staging levantado).
+  - **Al regenerar hay un paso manual**: `tablesFilter` saca las tablas `auth_*` del archivo, pero drizzle-kit **igual emite las FKs y relaciones que apuntan a `authUser`**. El archivo generado no compila hasta que se vuelve a agregar `import { authUser } from "./auth-schema"` arriba de `schema.ts` y de `relations.ts`. Hay un comentario en ambos archivos avisándolo.
 - `src/lib/db/client.ts`: exporta `db`, el objeto que el resto de la app va a importar para hacer queries (reemplaza `supabase.from(...)`). Lee la conexión de la variable de entorno `DATABASE_URL`.
 - `DATABASE_URL` en `.env.local` (gitignoreado): hoy apunta al túnel SSH hacia staging (`127.0.0.1:5433`) para desarrollo local. Cuando haya un ambiente self-hosted real corriendo la app, va a apuntar directo al Postgres de esa VPS (misma red Docker, sin túnel).
 
@@ -262,8 +263,8 @@ Antes el middleware leía el rol del JWT y decidía todo. Better Auth guarda el 
 ### Pendiente de esta fase
 
 - [x] Correr `scripts/migrar-usuarios-auth.ts --aplicar` contra staging — 23/23 migrados, todos con `issuer='local:credential'`, hash bcrypt y su UUID original. Login con contraseña real verificado.
-- [ ] Re-agregar las FKs a usuarios que quedaron sueltas desde el inicio de la migración: `encuestas.marcado_sin_respuesta_por` y `encuesta_medidas.created_by` son `UUID` sin constraint, y ahora existe `auth_user(id)` a la que apuntar. **Ojo con los tipos**: esas columnas son `UUID` y `auth_user.id` es `TEXT`, así que hay que convertirlas.
-- [ ] Sacar `@supabase/ssr` y `@supabase/supabase-js` de `package.json` (ya no los importa nadie; `src/types/database.types.ts` se sigue usando solo para tipos, no tiene dependencia en runtime).
+- [x] Re-agregar las FKs a usuarios que quedaron sueltas desde el inicio de la migración (ver más abajo). **Falta aplicar la migración a staging** — bloqueado por el túnel SSH.
+- [x] Sacar `@supabase/ssr` y `@supabase/supabase-js` de `package.json` (`src/types/database.types.ts` se sigue usando solo para tipos, no tiene dependencia en runtime).
 - [ ] Definir `BETTER_AUTH_SECRET` y `BETTER_AUTH_URL` en el entorno de producción durante el cutover. **Si `BETTER_AUTH_SECRET` cambia, todas las sesiones abiertas se invalidan** — no regenerarlo por accidente entre deploys.
 
 ### Reset de contraseña: probado de punta a punta con SMTP real (2026-08-19)
@@ -290,3 +291,32 @@ El script `dev` quedó fijado en el puerto **3010** (`next dev -p 3010`) porque 
 
 - **Pedir un reset nuevo no invalida los anteriores.** Si alguien pide varios, todos los links siguen sirviendo hasta que vencen (1h). Un mail reenviado o filtrado sigue siendo utilizable en esa ventana. No se cambió el comportamiento, pero conviene saberlo.
 - **Cuidado al limpiar `auth_verification` en scripts de prueba:** borrar por patrón (`identifier LIKE 'reset-password:%'`) se lleva puestos los pedidos de reset **reales** que haya pendientes. Acotar siempre al usuario de prueba.
+
+### Las FKs a `auth_user` (2026-08-20)
+
+`encuestas.marcado_sin_respuesta_por` y `encuesta_medidas.created_by` apuntaban a `auth.users(id)` de Supabase. Al portar el schema quedaron como `UUID` sin constraint, porque esa tabla no existía. Ahora sí existe `auth_user(id)`, y `20260820000000_fks_auth_user.sql` las reconecta.
+
+Son columnas **de auditoría** (quién marcó una OF como sin respuesta, quién escribió una medida de llamado), así que la FK va con **`ON DELETE SET NULL`**: borrar un usuario no puede borrar encuestas ni medidas, ni bloquear el borrado. Se pierde el "quién" y se conserva el registro.
+
+**Cambio de tipo**: `auth_user.id` es `TEXT` (tipo nativo de Better Auth), así que las dos columnas pasan de `UUID` a `TEXT`. Los usuarios migrados guardan su UUID de Supabase como texto, así que los valores siguen coincidiendo y no se pierde ninguna referencia. Los índices parciales se reconstruyen solos con el opclass del tipo nuevo.
+
+La migración es **re-ejecutable** (guardas por tipo actual y por `pg_constraint`), porque se va a aplicar de nuevo contra producción en el cutover.
+
+#### Referencias huérfanas
+
+Si una de esas columnas apunta a un usuario que ya no existe (borrado de Supabase Auth antes de la migración, o nunca migrado), la FK no se puede crear. La migración las pone en `NULL` e **informa cuántas** por `RAISE NOTICE` — mirar ese número al aplicarla, es dato perdido de auditoría.
+
+#### Verificación
+
+Probada contra una copia local del schema de staging (`combined_selfhosted.sql` + las dos migraciones posteriores) en un Postgres descartable, con datos que ejercitan los tres casos: referencia válida, huérfana y `NULL`.
+
+- La migración corre limpia, informa `encuestas=1, encuesta_medidas=1` huérfanas, y una segunda corrida es no-op.
+- La referencia válida sobrevive al cambio de tipo; los índices parciales quedan iguales.
+- **10 asserts a través de los servicios reales** (`marcarEncuestaSinRespuesta`, `agregarMedidaLlamado`, `revertirEncuestaANecesidadLlamado`) apuntando a esa base: la FK rechaza un autor inexistente, la transacción de revertir sigue funcionando, y borrar el usuario deja las 3 medidas en pie sin autor.
+- `npx drizzle-kit pull` contra esa base genera exactamente las mismas definiciones de columna que se editaron a mano en `schema.ts` (`text(...)` y `text_ops`).
+
+**Falta aplicarla a staging**: requiere el túnel SSH, que necesita la passphrase de `id_ed25519_rasef_vps`.
+
+### Hallazgo para el cutover: `mensajes.py` todavía habla con Supabase
+
+La página `/whatsapp/setup` le indica al script externo `mensajes.py` (vive fuera de este repo, en la máquina del operador) que se configure con `SUPABASE_URL` + `SUPABASE_SERVICE_ROLE_KEY`: lee los jobs de WhatsApp **directo de Supabase**, sin pasar por la app. Se va a romper cuando se apague el proyecto de Supabase. Hay que portarlo a un endpoint de la app antes del cutover, y actualizar las instrucciones de esa pantalla.

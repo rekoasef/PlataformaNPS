@@ -1,5 +1,10 @@
 import { pgTable, index, check, uuid, text, timestamp, foreignKey, unique, smallint, boolean, jsonb, date, integer, pgView, bigint, numeric, pgEnum } from "drizzle-orm/pg-core"
 import { sql } from "drizzle-orm"
+// Las tablas de Better Auth viven en `auth-schema.ts` (escrito a mano) y están
+// excluidas del `pull` por `tablesFilter`. OJO al regenerar este archivo:
+// drizzle-kit igual emite las FKs que apuntan a `authUser`, así que hay que
+// volver a agregar este import o el archivo no compila.
+import { authUser } from "./auth-schema"
 
 export const campanaEstado = pgEnum("campana_estado", ['activa', 'completada', 'archivada'])
 export const encuestaEstado = pgEnum("encuesta_estado", ['pendiente', 'respondida', 'recordatorio_enviado', 'necesidad_de_llamado', 'sin_respuesta'])
@@ -161,13 +166,14 @@ export const encuestas = pgTable("encuestas", {
 	createdAt: timestamp("created_at", { withTimezone: true, mode: 'string' }).defaultNow().notNull(),
 	comentarioSinRespuesta: text("comentario_sin_respuesta"),
 	marcadoSinRespuestaAt: timestamp("marcado_sin_respuesta_at", { withTimezone: true, mode: 'string' }),
-	marcadoSinRespuestaPor: uuid("marcado_sin_respuesta_por"),
+	// TEXT, no UUID: referencia a auth_user(id), que es TEXT (tipo nativo de Better Auth).
+	marcadoSinRespuestaPor: text("marcado_sin_respuesta_por"),
 }, (table) => [
 	index("idx_encuestas_campana_id").using("btree", table.campanaId.asc().nullsLast().op("uuid_ops")),
 	index("idx_encuestas_cliente_id").using("btree", table.clienteId.asc().nullsLast().op("uuid_ops")),
 	index("idx_encuestas_estado").using("btree", table.estado.asc().nullsLast().op("enum_ops")),
 	index("idx_encuestas_marcado_sin_respuesta_at").using("btree", table.marcadoSinRespuestaAt.asc().nullsLast().op("timestamptz_ops")).where(sql`(marcado_sin_respuesta_at IS NOT NULL)`),
-	index("idx_encuestas_marcado_sin_respuesta_por").using("btree", table.marcadoSinRespuestaPor.asc().nullsLast().op("uuid_ops")).where(sql`(marcado_sin_respuesta_por IS NOT NULL)`),
+	index("idx_encuestas_marcado_sin_respuesta_por").using("btree", table.marcadoSinRespuestaPor.asc().nullsLast().op("text_ops")).where(sql`(marcado_sin_respuesta_por IS NOT NULL)`),
 	index("idx_encuestas_token").using("btree", table.token.asc().nullsLast().op("uuid_ops")),
 	foreignKey({
 			columns: [table.clienteId],
@@ -179,6 +185,11 @@ export const encuestas = pgTable("encuestas", {
 			foreignColumns: [campanas.id],
 			name: "encuestas_campana_id_fkey"
 		}).onDelete("restrict"),
+	foreignKey({
+			columns: [table.marcadoSinRespuestaPor],
+			foreignColumns: [authUser.id],
+			name: "encuestas_marcado_sin_respuesta_por_fkey"
+		}).onDelete("set null"),
 	unique("unique_cliente_campana").on(table.clienteId, table.campanaId),
 	unique("encuestas_token_key").on(table.token),
 ]);
@@ -295,16 +306,22 @@ export const encuestaMedidas = pgTable("encuesta_medidas", {
 	encuestaId: uuid("encuesta_id").notNull(),
 	comentario: text().notNull(),
 	createdAt: timestamp("created_at", { withTimezone: true, mode: 'string' }).defaultNow().notNull(),
-	createdBy: uuid("created_by"),
+	// TEXT, no UUID: ver marcadoSinRespuestaPor en `encuestas`.
+	createdBy: text("created_by"),
 	updatedAt: timestamp("updated_at", { withTimezone: true, mode: 'string' }).defaultNow().notNull(),
 }, (table) => [
-	index("idx_encuesta_medidas_created_by").using("btree", table.createdBy.asc().nullsLast().op("uuid_ops")).where(sql`(created_by IS NOT NULL)`),
+	index("idx_encuesta_medidas_created_by").using("btree", table.createdBy.asc().nullsLast().op("text_ops")).where(sql`(created_by IS NOT NULL)`),
 	index("idx_encuesta_medidas_encuesta_id").using("btree", table.encuestaId.asc().nullsLast().op("uuid_ops")),
 	foreignKey({
 			columns: [table.encuestaId],
 			foreignColumns: [encuestas.id],
 			name: "encuesta_medidas_encuesta_id_fkey"
 		}).onDelete("cascade"),
+	foreignKey({
+			columns: [table.createdBy],
+			foreignColumns: [authUser.id],
+			name: "encuesta_medidas_created_by_fkey"
+		}).onDelete("set null"),
 ]);
 
 export const tiposEncuesta = pgTable("tipos_encuesta", {
