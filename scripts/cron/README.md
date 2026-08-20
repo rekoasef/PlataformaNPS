@@ -45,10 +45,10 @@ CRON_TZ=UTC
 de la VPS. Sin la línea `CRON_TZ=UTC`, el job diario se corre a una hora distinta de la
 que venía. No falla: simplemente pasa a otro horario y nadie se entera.
 
-**Los permisos de Docker.** El acceso a la VPS es usuario con sudo, **sin** grupo `docker`
-(fue una decisión, ver sección 5 del doc de migración). Por eso el crontab va en el de
-**root** (`sudo crontab -e`) y no en el del usuario: desde un crontab de usuario,
-`docker exec` falla y el error se va al mail de cron, que nadie lee.
+**Los permisos de Docker.** Quien corra esto tiene que poder hablar con Docker. Si el
+crontab es el de root, siempre puede. Si es un crontab de usuario, ese usuario tiene que
+estar en el grupo `docker` — y si algún día lo sacan, los jobs dejan de correr **en
+silencio**. Ver la nota de permisos más abajo.
 
 ## Verificar que está andando
 
@@ -112,14 +112,32 @@ En el crontab se ponen antes del comando: `NPS_PG_CONTAINER=... /usr/local/bin/n
   `check_campanas_sin_actividad()` no devuelve valor, se confirmó su efecto en la base:
   **insertó las 6 notificaciones** esperadas. Quedaron en staging a propósito, como evidencia
   del ensayo.
-- **Sin probar todavía**: el crontab de root y `CRON_TZ` — necesitan la contraseña de `posventa`,
-  pendiente de que IT la resetee.
+- **Cron activo desde el 2026-08-20 15:15 UTC**, en el crontab de `posventa` (ver nota de
+  permisos). Primera corrida disparada por cron: `2026-08-20T15:15:01Z [sync] ok -> 0`.
+- **Sin probar todavía**: que `CRON_TZ=UTC` se respete. La VPS está en
+  `America/Argentina/Buenos_Aires` (-03), así que si se ignorara, el job diario correría a las
+  12:00 UTC en vez de las 09:00 — sin dar error. Se confirma mirando el timestamp de la línea
+  `[notificaciones]` en el log: tiene que decir `09:00:0xZ`.
 
 ## Nota sobre permisos (2026-08-20)
 
-En el ensayo apareció que el usuario `posventa` está en el grupo `docker`
-(`groups=1001(posventa),990(docker)`), así que `docker exec` anda **sin sudo**. Eso permitió
-hacer el ensayo sin root, pero **contradice la decisión de acceso documentada** (sección 5 del
-doc de migración): se había descartado el grupo `docker` justamente porque equivale a root en el
-host y no deja auditoría individual. Consultado con IT; hasta que se resuelva, el crontab va
-igual en el de root, que es lo correcto independientemente de esto.
+El acceso real de la VPS **no es el que dice la sección 5 del doc de migración**. Ahí se
+decidió "usuario personal con sudo, sin grupo `docker`". En la práctica quedó al revés:
+
+- `posventa` **no está en el sudoers** (`posventa is not in the sudoers file`).
+- `posventa` **sí está en el grupo `docker`** (`groups=1001(posventa),990(docker)`), así que
+  `docker exec` anda sin sudo.
+
+Es más privilegio del acordado y menos usabilidad: el grupo `docker` equivale a root en el
+host (se monta el filesystem dentro de un contenedor) y además no deja auditoría individual,
+mientras que sin sudo no se puede hacer administración normal.
+
+Ojo que esto tapó el diagnóstico un rato: `sudo -n true` responde *"a password is required"*
+aunque el usuario no esté en el sudoers, porque autentica **antes** de chequear permisos. Para
+saber si alguien tiene sudo de verdad hay que llegar a ejecutar algo.
+
+**Consecuencia para estos jobs:** por ahora quedaron en el **crontab de `posventa`**, no en el
+de root, que es lo único posible sin sudo. Funciona porque el usuario está en el grupo `docker`.
+Es interino: un crontab de usuario está atado a esa cuenta, y si la dan de baja o la sacan del
+grupo, los jobs mueren sin avisar. Cuando IT resuelva los permisos, mover a root con la
+instalación de arriba.
