@@ -48,6 +48,7 @@ Todo el desarrollo de la migración se hace **en paralelo a producción, sin toc
 - [x] Migrar `src/app/encuesta/*` — formulario público (ver sección 12).
 - [x] Auth: **Better Auth** elegido e implementado, y las FKs a `auth_user` reconectadas (ver sección 13). Falta correr la migración de usuarios en producción durante el cutover.
 - [x] Reemplazar los 2 jobs de `pg_cron`: las funciones ya estaban portadas y se verificaron contra staging; el script y el runbook están en `scripts/cron/`. Se descartó el endpoint HTTP: la lógica es SQL puro que ya vive en la base. **Instalado y corriendo en la VPS** desde el 2026-08-20, en el crontab de `posventa` (interino: no hay sudo, ver la nota de permisos del README). El 2026-08-21 se verificó que `CRON_TZ=UTC` **no funciona** en este cron y se corrigió el crontab; el job diario quedó a las 09:00 local (12:00 UTC).
+- [x] Sacar a `mensajes.py` (el agente de WhatsApp) de Supabase — ver sección 14.
 - [ ] Definir estrategia de backups del Postgres de staging/producción con IT.
 - [ ] Cutover final: sync de datos, ventana de mantenimiento corta, merge de la PR, switch de env vars.
 
@@ -326,6 +327,46 @@ Probada contra una copia local del schema de staging (`combined_selfhosted.sql` 
 
 Las relaciones nuevas apuntan a `authUser`, pero `client.ts` solo registraba `schema` + `relations`, y `authUser` vive en `auth-schema.ts`. Con la tabla sin registrar, cualquier `db.query.*` que use esas relaciones **revienta en runtime** con `Cannot read properties of undefined (reading 'columns')` — no lo agarra el compilador. Hoy no lo notaba nadie porque toda la app usa el builder (`db.select()`) y no hay un solo `db.query.*` en `src/`, así que `relations.ts` estaba de adorno. Se agregó `...authSchema` al `drizzle()` de `client.ts`; el adapter de Better Auth no se toca, recibe su schema por separado.
 
-### Hallazgo para el cutover: `mensajes.py` todavía habla con Supabase
+### Hallazgo para el cutover: `mensajes.py` hablaba con Supabase — resuelto (2026-08-21)
 
-La página `/whatsapp/setup` le indica al script externo `mensajes.py` (vive fuera de este repo, en la máquina del operador) que se configure con `SUPABASE_URL` + `SUPABASE_SERVICE_ROLE_KEY`: lee los jobs de WhatsApp **directo de Supabase**, sin pasar por la app. Se va a romper cuando se apague el proyecto de Supabase. Hay que portarlo a un endpoint de la app antes del cutover, y actualizar las instrucciones de esa pantalla.
+La página `/whatsapp/setup` le indicaba al script externo `mensajes.py` (vive fuera de este repo, en la máquina del operador) que se configurara con `SUPABASE_URL` + `SUPABASE_SERVICE_ROLE_KEY`: leía los jobs de WhatsApp **directo de Supabase**, sin pasar por la app. Se resolvió en la sección 14.
+
+## 14. El agente de WhatsApp sale de Supabase (2026-08-21)
+
+`mensajes.py` ahora habla con la app por tres endpoints (`/api/whatsapp/agente/*`) autenticados con un token propio (`WHATSAPP_AGENTE_TOKEN`), en vez de leer y escribir la base directo. El script quedó versionado en `scripts/whatsapp/`, con su runbook.
+
+**De paso se sacó la `service_role_key` de la PC del operador**, que era una llave con acceso total a la base viviendo en un `.env` en un escritorio. El token nuevo solo abre esos tres endpoints y se revoca cambiándolo en dos lados.
+
+### Por qué el script sigue corriendo en una PC y no en el servidor
+
+Al abrirlo se confirmó que no automatiza ninguna API de WhatsApp: abre Chrome en `web.whatsapp.com`, **mueve el mouse a coordenadas fijas** (`pg.moveTo(700, 500)`), pega la imagen por el portapapeles de Windows y tipea el mensaje tecla por tecla. Necesita pantalla, mouse y una sesión de WhatsApp abierta.
+
+Centralizar el envío no es mudar el script a un contenedor: es **reemplazar el emisor**. Las opciones evaluadas fueron la Cloud API oficial de Meta (la única sólida para "cualquier usuario aprieta un botón y el servidor manda", pero exige verificación de la empresa, número dedicado y plantillas aprobadas) y una librería no oficial tipo Baileys en un contenedor (más barata, pero pone el número de la empresa a riesgo de baneo corriendo 24/7 desde un datacenter). **Se decidió no hacer ninguna de las dos ahora**: el apagado de Supabase tiene fecha y no puede esperar a Meta. Este cambio es deliberadamente chico para que se tire sin dolor si se va a Cloud API.
+
+### Tres cosas que se movieron al servidor
+
+- **El renderizado del mensaje.** El reemplazo de `{nombre}` y `{url}` estaba duplicado en Python y en `renderizar.ts`. Ahora el endpoint devuelve el texto ya armado. Verificado que las líneas que se tipean son **idénticas** a las de antes, línea por línea, renglones en blanco incluidos.
+- **Los contadores del job.** El script leía `enviados` y lo escribía +1 en dos llamadas sueltas; ahora el servidor los recuenta desde las filas del detalle dentro de la transacción.
+- **El filtro de pendientes.** El `GET` devuelve solo los contactos que faltan, así relanzar un job cortado no le vuelve a escribir a quien ya recibió el mensaje.
+
+### Bug encontrado: los jobs detenidos figuraban como "Completado"
+
+Al apretar Detener, el script cortaba el loop y **después marcaba el job como `completado`** igual, pisando el `interrumpido`. La plataforma mostraba campañas cortadas a la mitad como si hubieran salido enteras: en staging había dos, de 3 sobre 8 y de 1 sobre 10.
+
+Arreglado de los dos lados a propósito: el script reporta `interrumpido`, y `marcarJobEstado` se niega a mover un job de `interrumpido` a `completado` sin importar lo que le pidan — una versión vieja del script no puede volver a romperlo. El endpoint devuelve el estado que quedó, no el que se pidió.
+
+### Agujero de seguridad tapado de paso
+
+`/api/whatsapp/jobs/[id]` (el que consulta la pantalla de progreso) **no verificaba la sesión**. Lo único que lo cubría era el middleware, que por diseño solo mira que *exista* la cookie, sin validarla. Con una cookie inventada y un UUID de job se filtraban celulares y las `url_encuesta` **con el token de cada encuesta adentro** — y con ese token se puede responder en nombre del cliente. Reproducido antes de arreglarlo y verificado después: ahora da 401.
+
+Es el tipo de agujero que aparece al cambiar RLS por autorización en la aplicación (sección 5). **Vale la pena una pasada por el resto de los route handlers** antes del cutover, buscando los que no llamen a `getUsuarioActual()`.
+
+### Verificación
+
+Contra staging por el túnel, con un job descartable de 3 contactos creado y borrado al final (staging quedó igual, encuestas intactas):
+
+- Sin token, con token incorrecto y con token de otro largo → 401. Job inexistente → 404. Body inválido → 400.
+- Mensaje renderizado, celular sin los espacios de la base, `ruta_imagen` devuelta tal cual (es una ruta de Windows, la resuelve la PC del operador).
+- Ciclo completo: arranca, reporta un enviado y un error, y el `GET` deja de traer los ya reportados. Contadores en 1 y 1.
+- La guarda del `interrumpido`: detenido desde la plataforma, el script pide `completado` y la respuesta dice `interrumpido`. Un job no interrumpido sí completa. `started_at` no se pisa al relanzar (va con `coalesce`).
+- Las funciones reales del script ejercitadas contra el server con las libs de Windows stubbeadas: 13 asserts, incluido el mensaje de error del 401.

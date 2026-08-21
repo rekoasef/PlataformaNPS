@@ -14,7 +14,11 @@ import { getSessionCookie } from 'better-auth/cookies'
  * no acá: el rol no viaja en la cookie.
  */
 
-const RUTAS_PUBLICAS = ['/login', '/encuesta', '/nueva-password', '/api/auth']
+// `/api/whatsapp/agente` no lleva sesión a propósito: del otro lado hay un
+// script, no un browser. No queda abierto — cada uno de esos handlers exige el
+// token del agente con `esAgenteAutorizado()`. Acá solo se lo saca del redirect
+// a /login, que para un cliente que no es un browser sería un 200 con HTML.
+const RUTAS_PUBLICAS = ['/login', '/encuesta', '/nueva-password', '/api/auth', '/api/whatsapp/agente']
 
 export async function middleware(request: NextRequest) {
   const { pathname } = request.nextUrl
