@@ -91,12 +91,27 @@ Todo el desarrollo de la migración se hace **en paralelo a producción, sin toc
 
 ## 7. Próximos pasos inmediatos
 
-Con `src/app/encuesta/*` migrado (sección 12), **toda la app corre contra Drizzle salvo lo que depende de Supabase Auth**. Lo que queda:
+**Estado al 2026-08-21.** La app entera corre contra la infraestructura propia en staging —Postgres + Drizzle + Better Auth— y **no queda nada que hable con Supabase**: ni la app (no hay un solo import), ni los jobs programados (cron de sistema en la VPS, sección 4), ni el agente de WhatsApp (sección 14, el último que faltaba). Lo que queda no es migrar código: es infraestructura y el corte.
 
-1. **Auth** — decidir NextAuth/Auth.js vs Better Auth e implementarlo. Desbloquea `usuarios.service.ts` y permite re-agregar las FKs a la tabla de usuarios (`encuestas.marcado_sin_respuesta_por`, `encuesta_medidas.created_by`, hoy UUID sueltos).
-2. **Jobs de `pg_cron`** → endpoints + cron de sistema en la VPS.
-3. Backups del Postgres con IT.
-4. Cutover final.
+1. **Backups del Postgres, con IT.** Es lo único que conviene resolver **antes** del cutover, no después: el momento de mayor riesgo de perder datos es justamente ese. Hoy staging no tiene ninguno, y tiene una copia de datos reales de clientes adentro. Con Supabase los backups venían incluidos; en infra propia no existen hasta que alguien los configure.
+
+   Tres preguntas para IT: ¿ya hay algún backup andando en esa VPS, y cubre los volúmenes de Docker? ¿Hay un destino **fuera** de la VPS donde dejar los dumps? ¿Qué retención les cierra?
+
+   La propuesta si no hay nada: `pg_dump` diario comprimido, retención ~30 días, copia fuera de la VPS, más un runbook de restauración **probado una vez** contra una base descartable. Dos trampas conocidas: un backup en la misma VPS no protege contra perder la VPS, y un snapshot de un Postgres corriendo puede quedar inconsistente (por eso `pg_dump` y no copiar el volumen).
+
+2. **Permisos en la VPS, con IT.** Sigue sin resolverse el pedido: `posventa` no tiene sudo y sí está en el grupo `docker`, al revés de lo acordado (sección 5). Mientras tanto los jobs de cron viven en un crontab de usuario que muere sin avisar si dan de baja la cuenta. **Sumar al mismo pedido: la VPS no tiene NTP** (`System clock synchronized: no`), así que el reloj deriva y con él todos los horarios programados.
+
+3. **Levantar la app self-hosted.** Hasta ahora solo migró Postgres: no hay contenedor de app de staging ni el subdominio `staging.portalcrucianelli.site` (línea 30). No hizo falta porque se accede a la base por túnel SSH, pero antes del cutover conviene ver la app corriendo en la VPS y no solo en la notebook.
+
+4. **Cutover.** El orden importa:
+   1. Aplicar las migraciones al Postgres de producción (la de FKs es re-ejecutable a propósito).
+   2. Copia final de los datos desde Supabase, en ventana de mantenimiento corta.
+   3. Correr `scripts/migrar-usuarios-auth.ts --aplicar` contra producción.
+   4. Variables de entorno: `DATABASE_URL`, `BETTER_AUTH_SECRET`, `BETTER_AUTH_URL`, `WHATSAPP_AGENTE_TOKEN`. **Ojo con `BETTER_AUTH_SECRET`**: si cambia entre deploys, se invalidan todas las sesiones abiertas.
+   5. Apuntar `scripts/cron/nps-jobs.sh` a la base de producción (variables `NPS_*`).
+   6. Merge de la PR #19 y deploy.
+   7. Actualizar el `.env` de la PC del operador: `PLATAFORMA_URL` a producción y el `WHATSAPP_AGENTE_TOKEN` definitivo.
+   8. Verificar, y **recién ahí** apagar Supabase — mientras siga prendido hay a dónde volver.
 
 ## 10. Progreso de migración de módulos a Drizzle
 
