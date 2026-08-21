@@ -15,35 +15,61 @@ de que la app esté levantada.
 
 ## Instalación en la VPS
 
+**Cómo está instalado hoy** (interino, sin sudo — ver la nota de permisos al final):
+el script vive en `/home/posventa/nps-jobs.sh`, el log en `/home/posventa/nps-jobs.log`
+y los jobs están en el **crontab de `posventa`**, no en el de root.
+
 ```bash
 # 1. Copiar el script (desde la máquina de desarrollo)
 scp -P 5399 -i ~/.ssh/id_ed25519_rasef_vps \
-    scripts/cron/nps-jobs.sh posventa@200.58.99.137:/tmp/nps-jobs.sh
+    scripts/cron/nps-jobs.sh posventa@200.58.99.137:/home/posventa/nps-jobs.sh
 
-# 2. En la VPS, dejarlo en su lugar
-sudo install -m 755 -o root -g root /tmp/nps-jobs.sh /usr/local/bin/nps-jobs.sh
-sudo touch /var/log/nps-jobs.log
+# 2. En la VPS, darle permisos de ejecución
+chmod 755 /home/posventa/nps-jobs.sh
 
 # 3. Probar a mano ANTES de programarlo
-sudo /usr/local/bin/nps-jobs.sh sync
-sudo /usr/local/bin/nps-jobs.sh notificaciones
-sudo cat /var/log/nps-jobs.log
+/home/posventa/nps-jobs.sh sync
+/home/posventa/nps-jobs.sh notificaciones
+cat /home/posventa/nps-jobs.log
 ```
 
-Recién cuando esas dos corridas loguean `ok`, programarlo con `sudo crontab -e`:
+Recién cuando esas dos corridas loguean `ok`, programarlo con `crontab -e`:
 
 ```cron
-CRON_TZ=UTC
+# Los horarios son hora LOCAL de la VPS (-03). NO poner CRON_TZ: no funciona,
+# ver "Dos cosas que lo rompen callado" más abajo.
+NPS_LOG=/home/posventa/nps-jobs.log
+NPS_LOCK_DIR=/tmp
 
-*/15 * * * * /usr/local/bin/nps-jobs.sh sync
-0 9    * * * /usr/local/bin/nps-jobs.sh notificaciones
+*/15 * * * * /home/posventa/nps-jobs.sh sync
+0 9    * * * /home/posventa/nps-jobs.sh notificaciones
 ```
+
+Los dos `NPS_*` están porque los defaults del script apuntan a `/var/log` y `/var/lock`,
+que sin sudo no se pueden escribir. Cuando esto se mueva al crontab de root, se pueden
+sacar y vuelven a valer los defaults.
+
+Cuando IT resuelva los permisos, la instalación buena es `sudo install -m 755 -o root -g
+root ... /usr/local/bin/nps-jobs.sh`, `sudo touch /var/log/nps-jobs.log` y las mismas dos
+líneas en `sudo crontab -e` sin los `NPS_*`.
 
 ## Dos cosas que lo rompen callado
 
-**El huso horario.** `pg_cron` corría en **UTC**; el cron del sistema usa la hora local
-de la VPS. Sin la línea `CRON_TZ=UTC`, el job diario se corre a una hora distinta de la
-que venía. No falla: simplemente pasa a otro horario y nadie se entera.
+**El huso horario — y `CRON_TZ` no lo arregla.** `pg_cron` corría en **UTC**; el cron
+del sistema usa la hora local de la VPS (`America/Argentina/Buenos_Aires`, -03), así que
+el job diario se corre a otra hora. No falla: simplemente pasa a otro horario y nadie se
+entera.
+
+Lo que **no** sirve como solución es `CRON_TZ=UTC`: el cron de esta VPS es
+`cron 3.0pl1-197` (Debian/Ubuntu), que **no implementa `CRON_TZ` en absoluto**. La cadena
+no existe dentro de `/usr/sbin/cron` y `man 5 crontab` no la documenta. No da error ni
+warning: se acepta como una variable de entorno cualquiera, se le pasa al job, y los
+horarios siguen siendo locales. Verificado el 2026-08-21 (ver más abajo).
+
+Conclusión práctica: **los horarios del crontab son locales**, y si hace falta una hora
+UTC concreta hay que restarle 3 a mano y dejarlo comentado en el crontab. Si algún día se
+necesita que sea inmune al huso del host, la salida es despertar el job cada hora y
+filtrar por `date -u +%H` adentro del script.
 
 **Los permisos de Docker.** Quien corra esto tiene que poder hablar con Docker. Si el
 crontab es el de root, siempre puede. Si es un crontab de usuario, ese usuario tiene que
@@ -53,7 +79,7 @@ silencio**. Ver la nota de permisos más abajo.
 ## Verificar que está andando
 
 ```bash
-sudo tail -20 /var/log/nps-jobs.log
+tail -20 /home/posventa/nps-jobs.log
 ```
 
 Cada línea es `<timestamp UTC> [job] ok` — y `sync` agrega `-> N` con las filas que
@@ -85,7 +111,8 @@ Los defaults del script apuntan a **staging**. Se sobreescriben por variables de
 | `NPS_LOG` | `/var/log/nps-jobs.log` |
 | `NPS_LOCK_DIR` | `/var/lock` |
 
-En el crontab se ponen antes del comando: `NPS_PG_CONTAINER=... /usr/local/bin/nps-jobs.sh sync`.
+En el crontab se ponen como líneas `VAR=valor` antes de los jobs (así está hoy `NPS_LOG`
+y `NPS_LOCK_DIR`), o antes del comando: `NPS_PG_CONTAINER=... /home/posventa/nps-jobs.sh sync`.
 
 ## En el cutover
 
@@ -94,7 +121,9 @@ En el crontab se ponen antes del comando: `NPS_PG_CONTAINER=... /usr/local/bin/n
    **Mientras los dos existan, los dos jobs corren contra bases distintas** — inofensivo
    antes del cutover (son bases separadas), pero hay que apagar Supabase para que no
    quede nada corriendo sobre datos viejos.
-3. Verificar el log al día siguiente: el job diario tiene que haber corrido a las 09:00 UTC.
+3. Verificar el log al día siguiente: el job diario tiene que haber corrido a las **12:00
+   UTC** (09:00 local, ver el gotcha del huso). Si se movió al crontab de root en una VPS
+   con otro huso, recalcular antes de dar por buena la corrida.
 
 ## Verificación hecha (2026-08-20)
 
@@ -114,10 +143,28 @@ En el crontab se ponen antes del comando: `NPS_PG_CONTAINER=... /usr/local/bin/n
   del ensayo.
 - **Cron activo desde el 2026-08-20 15:15 UTC**, en el crontab de `posventa` (ver nota de
   permisos). Primera corrida disparada por cron: `2026-08-20T15:15:01Z [sync] ok -> 0`.
-- **Sin probar todavía**: que `CRON_TZ=UTC` se respete. La VPS está en
-  `America/Argentina/Buenos_Aires` (-03), así que si se ignorara, el job diario correría a las
-  12:00 UTC en vez de las 09:00 — sin dar error. Se confirma mirando el timestamp de la línea
-  `[notificaciones]` en el log: tiene que decir `09:00:0xZ`.
+- **`CRON_TZ=UTC` NO se respeta — verificado el 2026-08-21.** Era la sospecha que había
+  quedado abierta y se confirmó por partida triple:
+  1. Una línea de prueba `54 04 * * * ... sync` que había quedado en el crontab figura en el
+     log como `2026-08-21T07:54:01Z`, o sea las 04:54 **locales**.
+  2. El job diario no corrió a las 09:00Z de ese día.
+  3. Corrió a las `2026-08-21T12:00:02Z` — 09:00 local, exactamente lo predicho.
+
+  La causa es que `cron 3.0pl1-197` no implementa `CRON_TZ` (ver el gotcha del huso). Se sacó
+  la línea del crontab, que no hacía nada más que dar una falsa sensación de seguridad, y se
+  dejó documentado ahí mismo que los horarios son locales.
+
+  **El diario quedó a las 09:00 local (12:00 UTC)**, no se lo devolvió a las 09:00 UTC:
+  `check_campanas_sin_actividad` solo inserta notificaciones in-app y tiene guarda de 24h, así
+  que la hora exacta no cambia nada funcional — y las 09:00 UTC de `pg_cron` eran las 06:00 de
+  la mañana en Argentina, un default de Supabase, no una decisión.
+
+- **La VPS no tiene NTP** (`System clock synchronized: no`, `NTP service: n/a`, 2026-08-21).
+  Sin sincronización el reloj deriva y con él todos estos horarios, en silencio. Es de IT:
+  sin sudo no se puede activar. Pedirlo junto con el tema de permisos.
+
+- **Se limpió la línea de prueba** `54 04 * * * ... sync`, que corría un sync extra por día.
+  Era inofensiva (hay `flock` y la función es idempotente), pero no tenía razón de estar.
 
 ## Nota sobre permisos (2026-08-20)
 

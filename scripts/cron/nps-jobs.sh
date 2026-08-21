@@ -3,11 +3,15 @@
 # Reemplazo de los jobs de pg_cron que corrían en Supabase.
 #
 # Las dos funciones son SQL puro y ya viven en el Postgres self-hosted; esto es
-# solo el que las llama. Se instala en el crontab de root de la VPS (ver README.md).
+# solo el que las llama. Hoy está en el crontab de `posventa` (sin sudo); cuando IT
+# resuelva los permisos va al de root. Ver README.md.
 #
 # Uso:
 #   nps-jobs.sh sync            -> sync_encuestas_necesidad_llamado()   (cada 15 min)
-#   nps-jobs.sh notificaciones  -> check_campanas_sin_actividad()       (diario 09:00 UTC)
+#   nps-jobs.sh notificaciones  -> check_campanas_sin_actividad()       (diario)
+#
+# OJO: el cron de la VPS no soporta CRON_TZ, así que los horarios del crontab son
+# hora LOCAL (-03), no UTC. El timestamp que loguea este script sí es UTC.
 #
 # Configuración por variables de entorno (los defaults apuntan a STAGING):
 #   NPS_PG_CONTAINER  contenedor de Postgres          (default: npsplatform_postgres_staging)

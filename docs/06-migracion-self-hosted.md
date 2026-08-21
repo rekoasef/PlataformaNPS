@@ -47,7 +47,7 @@ Todo el desarrollo de la migración se hace **en paralelo a producción, sin toc
 - [x] Migrar `services/*.ts` módulo por módulo, reemplazando `supabase.from(...)` por queries propias (ver sección 10; queda `usuarios.service.ts` bloqueado por Auth).
 - [x] Migrar `src/app/encuesta/*` — formulario público (ver sección 12).
 - [x] Auth: **Better Auth** elegido e implementado, y las FKs a `auth_user` reconectadas (ver sección 13). Falta correr la migración de usuarios en producción durante el cutover.
-- [~] Reemplazar los 2 jobs de `pg_cron`: las funciones ya estaban portadas y se verificaron contra staging; el script y el runbook están en `scripts/cron/`. **Falta instalarlo en la VPS** (crontab de root). Se descartó el endpoint HTTP: la lógica es SQL puro que ya vive en la base.
+- [x] Reemplazar los 2 jobs de `pg_cron`: las funciones ya estaban portadas y se verificaron contra staging; el script y el runbook están en `scripts/cron/`. Se descartó el endpoint HTTP: la lógica es SQL puro que ya vive en la base. **Instalado y corriendo en la VPS** desde el 2026-08-20, en el crontab de `posventa` (interino: no hay sudo, ver la nota de permisos del README). El 2026-08-21 se verificó que `CRON_TZ=UTC` **no funciona** en este cron y se corrigió el crontab; el job diario quedó a las 09:00 local (12:00 UTC).
 - [ ] Definir estrategia de backups del Postgres de staging/producción con IT.
 - [ ] Cutover final: sync de datos, ventana de mantenimiento corta, merge de la PR, switch de env vars.
 
