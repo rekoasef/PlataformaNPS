@@ -7,22 +7,22 @@ export default function WhatsappSetupPage() {
 
   const regContent = `Windows Registry Editor Version 5.00
 
-[HKEY_CLASSES_ROOT\\whatsapp-sender]
+[HKEY_CURRENT_USER\\Software\\Classes\\whatsapp-sender]
 @="URL:WhatsApp Sender Protocol"
 "URL Protocol"=""
 
-[HKEY_CLASSES_ROOT\\whatsapp-sender\\shell]
+[HKEY_CURRENT_USER\\Software\\Classes\\whatsapp-sender\\shell]
 
-[HKEY_CLASSES_ROOT\\whatsapp-sender\\shell\\open]
+[HKEY_CURRENT_USER\\Software\\Classes\\whatsapp-sender\\shell\\open]
 
-[HKEY_CLASSES_ROOT\\whatsapp-sender\\shell\\open\\command]
-@="\\"C:\\\\Windows\\\\System32\\\\cmd.exe\\" /c \\"C:\\\\ruta\\\\a\\\\launcher.bat\\" \\"%1\\""
+[HKEY_CURRENT_USER\\Software\\Classes\\whatsapp-sender\\shell\\open\\command]
+@="\\"C:\\\\Windows\\\\System32\\\\cmd.exe\\" /k \\"\\"C:\\\\ruta\\\\a\\\\launcher.bat\\" \\"%1\\"\\""
 `
 
   const batContent = `@echo off
-cd /d "C:\\ruta\\a\\mensajes.py"
-call .venv\\Scripts\\activate
-python mensajes.py --job %1
+pushd "%~dp0"
+python mensajes.py %1
+popd
 pause`
 
   return (
@@ -41,7 +41,9 @@ pause`
             <p className="text-sm text-muted-foreground">
               Creá un archivo <code className="rounded bg-muted px-1 text-xs">launcher.bat</code> en
               la carpeta donde está <code className="rounded bg-muted px-1 text-xs">mensajes.py</code>.
-              Editá la ruta según tu instalación.
+              No hay nada que editar: <code className="rounded bg-muted px-1 text-xs">%~dp0</code> es
+              la carpeta del propio <code className="rounded bg-muted px-1 text-xs">.bat</code>, así que
+              sigue funcionando si movés todo de lugar.
             </p>
             <pre className="overflow-x-auto rounded-lg bg-muted p-4 text-xs text-foreground">
               {batContent}
@@ -65,7 +67,9 @@ pause`
             </pre>
             <p className="text-xs text-muted-foreground">
               En la ruta de la clave de registro, usá doble backslash{' '}
-              <code className="rounded bg-muted px-1 text-xs">\\</code> como separador.
+              <code className="rounded bg-muted px-1 text-xs">\\</code> como separador. Va bajo{' '}
+              <code className="rounded bg-muted px-1 text-xs">HKEY_CURRENT_USER</code> a propósito:
+              se registra solo para tu usuario y no pide permisos de administrador.
             </p>
           </CardContent>
         </Card>

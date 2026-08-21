@@ -346,6 +346,8 @@ Centralizar el envío no es mudar el script a un contenedor: es **reemplazar el 
 ### Tres cosas que se movieron al servidor
 
 - **El renderizado del mensaje.** El reemplazo de `{nombre}` y `{url}` estaba duplicado en Python y en `renderizar.ts`. Ahora el endpoint devuelve el texto ya armado. Verificado que las líneas que se tipean son **idénticas** a las de antes, línea por línea, renglones en blanco incluidos.
+
+Del envío en sí solo se cambió una cosa, y a pedido: la espera de 30-60s que separa un contacto del siguiente ya no corre después del último, donde no separaba nada y solo dejaba la terminal colgada un minuto. **El espaciado entre mensajes —lo que evita parecer un robot— no se tocó.**
 - **Los contadores del job.** El script leía `enviados` y lo escribía +1 en dos llamadas sueltas; ahora el servidor los recuenta desde las filas del detalle dentro de la transacción.
 - **El filtro de pendientes.** El `GET` devuelve solo los contactos que faltan, así relanzar un job cortado no le vuelve a escribir a quien ya recibió el mensaje.
 

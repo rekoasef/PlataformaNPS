@@ -233,9 +233,15 @@ def main():
         # 5. Cerrar pestaña y esperar
         time.sleep(random.uniform(3, 5))
         pg.hotkey('ctrl', 'w')
-        espera_entre = random.randint(30, 60)
-        print(f"💤 Siguiente en {espera_entre}s...")
-        time.sleep(espera_entre)
+
+        # Esta espera es para separar un envío del siguiente. Después del último
+        # no separa nada: solo deja la terminal colgada un minuto. Ojo que esto
+        # NO cambia el espaciado entre mensajes, que es lo que evita parecer un
+        # robot — solo saca la espera final, cuando ya no queda nadie.
+        if i < total - 1:
+            espera_entre = random.randint(30, 60)
+            print(f"💤 Siguiente en {espera_entre}s...")
+            time.sleep(espera_entre)
 
     # Cerrar el job. Si lo detuvieron, no se lo marca como completado: quedaron
     # contactos sin mandar y decir "completado" sería mentir. La plataforma
