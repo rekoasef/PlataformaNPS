@@ -13,13 +13,15 @@ WORKDIR /app
 COPY --from=deps /app/node_modules ./node_modules
 COPY . .
 
-# Env
-ARG NEXT_PUBLIC_SUPABASE_URL
-ARG NEXT_PUBLIC_SUPABASE_ANON_KEY
+# La única NEXT_PUBLIC_* que usa la app. Va como build arg porque Next la
+# reemplaza por su valor en tiempo de build, también del lado del servidor:
+# no se puede cambiar después inyectándola al contenedor. Por eso staging y
+# producción necesitan builds distintos y no pueden compartir la imagen.
+#
+# Las de Supabase se sacaron en la migración a infra propia: nada las lee.
+# El resto de la configuración (DATABASE_URL, BETTER_AUTH_*, SMTP_*) es de
+# runtime y se inyecta al correr el contenedor, no acá.
 ARG NEXT_PUBLIC_APP_URL
-
-ENV NEXT_PUBLIC_SUPABASE_URL=$NEXT_PUBLIC_SUPABASE_URL
-ENV NEXT_PUBLIC_SUPABASE_ANON_KEY=$NEXT_PUBLIC_SUPABASE_ANON_KEY
 ENV NEXT_PUBLIC_APP_URL=$NEXT_PUBLIC_APP_URL
 
 RUN npm run build
