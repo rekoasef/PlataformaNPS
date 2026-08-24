@@ -49,7 +49,8 @@ Todo el desarrollo de la migración se hace **en paralelo a producción, sin toc
 - [x] Auth: **Better Auth** elegido e implementado, y las FKs a `auth_user` reconectadas (ver sección 13). Falta correr la migración de usuarios en producción durante el cutover.
 - [x] Reemplazar los 2 jobs de `pg_cron`: las funciones ya estaban portadas y se verificaron contra staging; el script y el runbook están en `scripts/cron/`. Se descartó el endpoint HTTP: la lógica es SQL puro que ya vive en la base. **Instalado y corriendo en la VPS** desde el 2026-08-20, en el crontab de `posventa` (interino: no hay sudo, ver la nota de permisos del README). El 2026-08-21 se verificó que `CRON_TZ=UTC` **no funciona** en este cron y se corrigió el crontab; el job diario quedó a las 09:00 local (12:00 UTC).
 - [x] Sacar a `mensajes.py` (el agente de WhatsApp) de Supabase — ver sección 14.
-- [ ] Definir estrategia de backups del Postgres de staging/producción con IT.
+- [x] Auditoría de autorización de toda la superficie servidor (actions + route handlers) — ver sección 15.
+- [ ] Definir estrategia de backups del Postgres de staging/producción con IT — **pedido hecho el 2026-08-24, esperando a IT** (ver sección 7.1).
 - [ ] Cutover final: sync de datos, ventana de mantenimiento corta, merge de la PR, switch de env vars.
 
 ## 5. Decisiones tomadas
@@ -91,13 +92,30 @@ Todo el desarrollo de la migración se hace **en paralelo a producción, sin toc
 
 ## 7. Próximos pasos inmediatos
 
-**Estado al 2026-08-21.** La app entera corre contra la infraestructura propia en staging —Postgres + Drizzle + Better Auth— y **no queda nada que hable con Supabase**: ni la app (no hay un solo import), ni los jobs programados (cron de sistema en la VPS, sección 4), ni el agente de WhatsApp (sección 14, el último que faltaba). Lo que queda no es migrar código: es infraestructura y el corte.
+**Estado al 2026-08-24.** La app entera corre contra la infraestructura propia en staging —Postgres + Drizzle + Better Auth— y **no queda nada que hable con Supabase**: ni la app (no hay un solo import), ni los jobs programados (cron de sistema en la VPS, sección 4), ni el agente de WhatsApp (sección 14, el último que faltaba). Lo que queda no es migrar código: es infraestructura y el corte.
 
-1. **Backups del Postgres, con IT.** Es lo único que conviene resolver **antes** del cutover, no después: el momento de mayor riesgo de perder datos es justamente ese. Hoy staging no tiene ninguno, y tiene una copia de datos reales de clientes adentro. Con Supabase los backups venían incluidos; en infra propia no existen hasta que alguien los configure.
+1. **Backups del Postgres, con IT.** Es lo único que conviene resolver **antes** del cutover, no después: el momento de mayor riesgo de perder datos es justamente ese. Con Supabase los backups venían incluidos; en infra propia no existen hasta que alguien los configure.
 
-   Tres preguntas para IT: ¿ya hay algún backup andando en esa VPS, y cubre los volúmenes de Docker? ¿Hay un destino **fuera** de la VPS donde dejar los dumps? ¿Qué retención les cierra?
+   **Estado (2026-08-24): pedido hecho, esperando a IT.** Franco confirmó que **la VPS entera tiene backup diario** y ofreció armar un script que mande copias a un servidor SFTP. Se le pidió que lo que viaje al SFTP sea un `pg_dump` de la base, no las imágenes de la VM.
 
-   La propuesta si no hay nada: `pg_dump` diario comprimido, retención ~30 días, copia fuera de la VPS, más un runbook de restauración **probado una vez** contra una base descartable. Dos trampas conocidas: un backup en la misma VPS no protege contra perder la VPS, y un snapshot de un Postgres corriendo puede quedar inconsistente (por eso `pg_dump` y no copiar el volumen).
+   **Por qué no alcanza con el backup de la VPS.** Sí cubre el volumen de Docker — es una copia del disco completo, y `/var/lib/docker/volumes/` está adentro. El problema no es qué agarra sino **la granularidad de la restauración**: para recuperar esta base habría que restaurar la VM entera, y en esa VPS corren también los otros servicios de la empresa. O sea que ese backup solo es usable para el desastre grande (se perdió la VPS); para un borrado accidental o un bug acotado es inutilizable en la práctica. El `pg_dump` aparte es lo que permite recuperar solo el NPS sin tocar nada más.
+
+   **Lo pedido:** `pg_dump` diario del contenedor, enviado por SFTP fuera de la VPS, retención ~30 días.
+
+   ```bash
+   docker exec npsplatform_postgres_staging \
+     pg_dump -U nps_staging -d npsplatform_staging -Fc
+   ```
+
+   Corriendo dentro del contenedor no hace falta password (conexión por socket local), así que el script no necesita el secreto.
+
+   **Pendiente de respuesta de IT:** a qué destino SFTP, con qué retención, y si los backups de la VPS son snapshots o copia en caliente.
+
+   **Pendiente propio, no delegable:** la **prueba de restauración**. IT puede restaurar; el único que puede decir si la base quedó *correcta* es este lado — conteos por tabla y checksum de contenido (el mismo método de la sección 8), más levantar la app contra la copia restaurada. Un backup que nunca se restauró no se sabe si sirve.
+
+   **Interino mientras IT responde:** `pg_dump` manual por el túnel SSH, guardado fuera de la VPS. No es un sistema de backups (no es automático ni tiene retención), pero baja el piso de "si se muere la VPS perdemos todo" a "perdemos desde el último dump". Ojo que ese archivo lleva datos personales de clientes reales — no dejarlo suelto en cualquier carpeta.
+
+   **Dos trampas conocidas, para no volver a discutirlas:** un backup en la misma VPS no protege contra perder la VPS, y copiar los archivos de un Postgres corriendo puede dar una copia inconsistente que no arranca (por eso `pg_dump` y no copiar el volumen).
 
 2. **Permisos en la VPS, con IT.** Sigue sin resolverse el pedido: `posventa` no tiene sudo y sí está en el grupo `docker`, al revés de lo acordado (sección 5). Mientras tanto los jobs de cron viven en un crontab de usuario que muere sin avisar si dan de baja la cuenta. **Sumar al mismo pedido: la VPS no tiene NTP** (`System clock synchronized: no`), así que el reloj deriva y con él todos los horarios programados.
 
@@ -376,7 +394,7 @@ Arreglado de los dos lados a propósito: el script reporta `interrumpido`, y `ma
 
 `/api/whatsapp/jobs/[id]` (el que consulta la pantalla de progreso) **no verificaba la sesión**. Lo único que lo cubría era el middleware, que por diseño solo mira que *exista* la cookie, sin validarla. Con una cookie inventada y un UUID de job se filtraban celulares y las `url_encuesta` **con el token de cada encuesta adentro** — y con ese token se puede responder en nombre del cliente. Reproducido antes de arreglarlo y verificado después: ahora da 401.
 
-Es el tipo de agujero que aparece al cambiar RLS por autorización en la aplicación (sección 5). **Vale la pena una pasada por el resto de los route handlers** antes del cutover, buscando los que no llamen a `getUsuarioActual()`.
+Es el tipo de agujero que aparece al cambiar RLS por autorización en la aplicación (sección 5). La pasada por el resto de las superficies se hizo el 2026-08-24 y encontró bastante más de lo esperado — ver sección 15.
 
 ### Verificación
 
@@ -387,3 +405,51 @@ Contra staging por el túnel, con un job descartable de 3 contactos creado y bor
 - Ciclo completo: arranca, reporta un enviado y un error, y el `GET` deja de traer los ya reportados. Contadores en 1 y 1.
 - La guarda del `interrumpido`: detenido desde la plataforma, el script pide `completado` y la respuesta dice `interrumpido`. Un job no interrumpido sí completa. `started_at` no se pisa al relanzar (va con `coalesce`).
 - Las funciones reales del script ejercitadas contra el server con las libs de Windows stubbeadas: 13 asserts, incluido el mensaje de error del 401.
+
+---
+
+## 15. Auditoría de autorización: actions y route handlers (2026-08-24)
+
+La sección 14 dejó anotado que valía la pena revisar el resto de los route handlers, después de encontrar que `/api/whatsapp/jobs/[id]` no verificaba sesión. La revisión se hizo y **el agujero grande estaba en otro lado**: los route handlers eran los que mejor estaban.
+
+### Lo que se encontró
+
+**Los 7 route handlers ya validaban sesión**, pero **ninguno validaba rol.** El motivo es estructural y vale la pena tenerlo claro: `puedeAcceder()` se aplica en `(dashboard)/layout.tsx`, y en el árbol de rutas **`app/api` es hermano de `app/(dashboard)`, no hijo** — ese layout nunca los envuelve, así que la regla de rol jamás corría para ellos. Cada endpoint sabía que había sesión, no de quién era. Un usuario `rambla` (cuya única página permitida es `/rambla`) llegaba a:
+
+- `GET /api/respuestas/exportar` → CSV con email, teléfono, domicilio y provincia de todos los clientes que respondieron.
+- `GET /api/campanas/<id>/exportar` → CSV cuya columna `link_encuesta` es `…/encuesta?token=<token>` de cada pendiente; con eso se responde en nombre del cliente.
+- `GET /api/whatsapp/jobs/<id>` → `celular` + `url_encuesta` de cada contacto.
+
+**Y el hallazgo mayor: los server actions casi no tenían guardas.** De 34 actions exportadas, 30 son privilegiadas y **solo 4 verificaban quién llamaba** (las 3 de `rambla` y `eliminarEncuestaAction`). Dos archivos tenían el helper ya escrito pero casi sin usar: `campanas/actions.ts` definía `getRoleOrThrow()` y lo llamaba en 1 de 4 actions; `configuracion/actions.ts` definía `requireAdmin()` y lo llamaba en 1 de 4. En `llamados/actions.ts` el patrón `(await getUsuarioActual())?.id ?? null` **parecía** una verificación pero era atribución: sin sesión seguía igual, guardando `null`.
+
+### Por qué era alcanzable sin sesión válida
+
+Tres piezas que se combinan:
+
+1. `getSessionCookie()` de Better Auth (`node_modules/better-auth/dist/cookies/index.mjs:261`) **parsea la cookie y devuelve el string, sin validar nada** — no puede, corre en edge runtime sin acceso a Postgres. Una cookie inventada pasa el middleware.
+2. Los action IDs salen del bundle de cliente, servido desde `/_next/static/`, que **el matcher del middleware excluye**. Los lee cualquiera sin loguearse.
+3. Un Server Action es un POST a la ruta de la página con un header `Next-Action`. La protección CSRF de Next 15 compara `Origin` contra `Host`, y esos headers los controla quien arma el request con `curl`.
+
+Lo más grave que quedaba abierto: `eliminarCampanaAction`, `crearJobAction` (dispara envíos reales de WhatsApp a clientes) y `actualizarConfiguracionAction`, que reescribe `emails_notificacion` — con eso se redirigen las alertas de NPS crítico a donde el atacante quiera.
+
+### Lo que se hizo (commit `18fb57f`)
+
+- **`chequearRol()` en `src/lib/auth/session.ts`** — como `requireRol` pero devuelve el error como valor en vez de tirarlo, para los actions que responden `{ error }` y lo muestran en el form. En el caso `ok` devuelve además el usuario, así `llamados` no consulta la sesión dos veces para atribuir quién hizo la operación.
+- **`rechazarSiNoAutorizado()` en `src/lib/auth/api.ts`** — recibe la ruta de la **página** que el endpoint sirve y reusa `puedeAcceder()`, para que la regla de rol siga viviendo solo en `rutas.ts`. Si mañana `fabrica` gana acceso a `/campanas`, el endpoint de exportar lo hereda solo.
+- **`notificaciones/actions.ts`** — el rol venía como parámetro del cliente; ahora sale de la sesión. Eso dejó sin uso la prop `rol` de `NotificacionesBell`, que se sacó también del `Topbar`.
+
+Roles aplicados: todo lo de campañas, clientes, plantillas, whatsapp, configuración y llamados es admin; `/api/respuestas/exportar` acepta también `fabrica`, que sí tiene `/respuestas`. No hubo que decidir nada: sale de `RUTAS_POR_ROL`.
+
+### Gotcha: la guarda va **antes** del `try`
+
+Varios de estos actions tienen la forma `try { ... } catch (e) { return { error: e.message } }`. Una guarda puesta adentro del `try` **la agarra ese catch**: el action devuelve un error de aspecto inofensivo y sigue como si nada — o peor, parece protegido en la revisión de código sin estarlo. Van todas como primera línea del cuerpo.
+
+### Verificación
+
+`tsc`, `lint` y `build` pasan. Además se corrió un chequeo que recorre las 34 actions exportadas y los 7 handlers confirmando que la guarda esté en las primeras líneas del cuerpo, en vez de confiar en haberlas tocado todas a mano: 0 sin guarda, con `encuesta`/`login`/`nueva-password` marcadas como públicas a propósito.
+
+**Pendiente:** ejercitarlo con una sesión `rambla` real contra staging. Requiere el túnel SSH y la app levantada, no se hizo todavía.
+
+### Para el cutover
+
+Esto es el costo de haber sacado RLS y conviene tenerlo presente como categoría, no como un bug puntual: con Supabase, la base rechazaba la operación aunque el código se olvidara de preguntar. Ahora el único que pregunta es el código. **Toda superficie nueva que toque la base —un action, un route handler— nace sin protección hasta que alguien le pone la guarda.** El chequeo automático de arriba es barato de repetir y conviene volver a correrlo antes del cutover.
