@@ -131,7 +131,7 @@ Todo el desarrollo de la migración se hace **en paralelo a producción, sin toc
 
 2. **Permisos en la VPS, con IT.** Sigue sin resolverse el pedido: `posventa` no tiene sudo y sí está en el grupo `docker`, al revés de lo acordado (sección 5). Mientras tanto los jobs de cron viven en un crontab de usuario que muere sin avisar si dan de baja la cuenta. **Sumar al mismo pedido: la VPS no tiene NTP** (`System clock synchronized: no`), así que el reloj deriva y con él todos los horarios programados.
 
-3. **Levantar la app self-hosted.** Hasta ahora solo migró Postgres: no hay contenedor de app de staging ni el subdominio `staging.portalcrucianelli.site` (línea 30). No hizo falta porque se accede a la base por túnel SSH, pero antes del cutover conviene ver la app corriendo en la VPS y no solo en la notebook.
+3. **Levantar la app self-hosted — hecho el 2026-08-24 salvo el subdominio.** La app corre en la VPS contra el Postgres propio (ver sección 16). Falta `staging.portalcrucianelli.site` con TLS, que es DNS + reverse proxy y depende de IT.
 
 4. **Cutover.** El orden importa:
    1. Aplicar las migraciones al Postgres de producción (la de FKs es re-ejecutable a propósito).
@@ -465,3 +465,57 @@ Varios de estos actions tienen la forma `try { ... } catch (e) { return { error:
 ### Para el cutover
 
 Esto es el costo de haber sacado RLS y conviene tenerlo presente como categoría, no como un bug puntual: con Supabase, la base rechazaba la operación aunque el código se olvidara de preguntar. Ahora el único que pregunta es el código. **Toda superficie nueva que toque la base —un action, un route handler— nace sin protección hasta que alguien le pone la guarda.** El chequeo automático de arriba es barato de repetir y conviene volver a correrlo antes del cutover.
+
+---
+
+## 16. La app corriendo en la VPS (2026-08-24)
+
+Hasta acá solo había migrado Postgres. Ahora la app entera corre en la VPS contra la infraestructura propia: contenedor `npsplatform_staging_app`, imagen `crucianelli/npsplatform:staging`, escuchando en `127.0.0.1:3001` (no expuesto a internet) y unido a la red `npsplatform-staging_default` para ver al Postgres.
+
+### El pipeline de build no estaba migrado
+
+`deploy.sh` y el `Dockerfile` seguían pasando `NEXT_PUBLIC_SUPABASE_URL`/`ANON_KEY` como build args. Config muerta —nada las lee— pero con una arruga: `deploy.sh` las sacaba de `.env.local` con `grep | cut`, y si ya no están, las build args quedan **vacías en silencio**. `set -e` no lo agarra porque el estado de una tubería es el del último comando (`cut`), que sale con éxito. Se limpiaron las dos cosas (commit `9a3252b`).
+
+Quedó solo `NEXT_PUBLIC_APP_URL`, y **tiene que ser build arg**: Next la reemplaza por su valor en tiempo de build, también del lado del servidor. Consecuencia práctica: **staging y producción no pueden compartir imagen**. Correr la imagen de producción en staging genera links de encuesta apuntando a producción.
+
+### `deploy-staging.sh`: no pasa por Docker Hub
+
+La imagen viaja punto a punto (`docker save | gzip | ssh docker load`). Watchtower mira el registro, así que una imagen que nunca llega ahí no puede terminar en producción por accidente — no depende de que nadie se acuerde de nada. El contenedor además lleva `com.centurylinklabs.watchtower.enable=false`. Guard invertido respecto de `deploy.sh`: se niega a correr en `main`.
+
+### El build fallaba: `DATABASE_URL` al importar
+
+El primer build en Docker murió con `Failed to collect page data for /api/whatsapp/agente/jobs/[id]`. Causa: `src/lib/db/client.ts` tiraba al **importarse** si faltaba `DATABASE_URL`, y `npm run build` importa todos los módulos de rutas. En el contenedor la variable no existe (`.env*` está en `.dockerignore`, a propósito).
+
+Nunca se había visto porque localmente Next levanta `.env.local` solo, y la imagen de producción es anterior a Drizzle. **Este archivo nunca había pasado por un build de Docker.**
+
+Arreglado en `e703b7e`: el cliente se construye en el primer uso, detrás de un Proxy. `DATABASE_URL` sigue siendo configuración de runtime — pasarla como build arg hornearía la password en el historial de capas de la imagen.
+
+### Configuración de runtime
+
+En `/home/posventa/staging-app.env` (permisos 600, fuera de git), inyectado con `--env-file`. Va en archivo y no con `-e` en la línea de comandos para que la password no quede visible en `ps`.
+
+- `DATABASE_URL` apunta a **`postgres-staging:5432`**, el alias del contenedor dentro de la red, no a `127.0.0.1`: adentro de un contenedor, localhost es el contenedor mismo. La password va **percent-encodeada**, tiene caracteres que rompen la URL.
+- `BETTER_AUTH_SECRET` y `WHATSAPP_AGENTE_TOKEN` son propios de staging, generados nuevos. No reusar los de producción.
+- `BETTER_AUTH_URL=http://localhost:3001` mientras no exista el subdominio. Better Auth decide las cookies seguras por el **protocolo de esa URL** (no por `NODE_ENV`), así que con `http` no usa el prefijo `__Secure-` y el login funciona por el túnel.
+- **SMTP neutralizado a propósito** (`SMTP_HOST=127.0.0.1`, `SMTP_PORT=1`): `system_config` de staging tiene 18 destinatarios reales de producción y `sendEmail` usa SMTP de verdad. Sin esto, navegar el camino de NPS crítico manda alertas a gente de la empresa.
+
+### Smoke test
+
+Contra la app ya corriendo en la VPS:
+
+| Prueba | Resultado |
+|---|---|
+| `/login` | 200 |
+| `/encuesta` sin token | 404 |
+| `/encuesta` con token de formato inválido | 404 (no 500 — la corrección de la sección 12, ahora verificada en el contenedor real) |
+| `/encuesta` con UUID inexistente | 404 |
+| `/encuesta` con token real | 200 — prueba que la base responde a través del Proxy nuevo |
+| `/api/whatsapp/agente/*` sin token | 401 |
+| Rutas de API sin cookie | 307 al login (lo corta el middleware) |
+| **Rutas de API con cookie falsa** | **401** — pasa el middleware y la frena la guarda de la sección 15 |
+
+La última fila es la que vale: es el agujero de la sección 15 verificado en la app desplegada. Antes de `18fb57f`, ese `/api/respuestas/exportar` devolvía el CSV completo con datos personales.
+
+### Lo que falta
+
+El subdominio `staging.portalcrucianelli.site` con TLS: registro DNS más entrada en el reverse proxy de IT. Hasta que exista, la app se prueba por túnel SSH (`-L 3001:127.0.0.1:3001`) y **la validación de Auth queda a medias**, porque las cookies de sesión en producción van con flags que requieren HTTPS. Al crearse el subdominio hay que **rebuildear** con `STAGING_APP_URL=https://staging.portalcrucianelli.site` y actualizar `BETTER_AUTH_URL`: la URL está horneada en la imagen.
