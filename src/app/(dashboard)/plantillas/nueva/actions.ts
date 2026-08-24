@@ -3,11 +3,15 @@
 import { redirect } from 'next/navigation'
 import { createPlantilla } from '@/modules/plantillas/services/plantillas.service'
 import type { Pregunta } from '@/modules/plantillas/types/plantilla.types'
+import { chequearRol } from '@/lib/auth/session'
 
 export async function crearPlantillaAction(
   _prev: { error?: string },
   formData: FormData,
 ): Promise<{ error?: string }> {
+  const permiso = await chequearRol('admin')
+  if (!permiso.ok) return { error: permiso.error }
+
   const nombre = (formData.get('nombre') as string | null)?.trim()
   const introduccion = (formData.get('introduccion') as string | null)?.trim() ?? ''
   const preguntasRaw = formData.get('preguntas_json') as string | null

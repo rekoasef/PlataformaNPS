@@ -4,6 +4,7 @@ import { z } from 'zod'
 import { createCliente, createClientesBulk } from '@/modules/clientes/services/clientes.service'
 import { parseClientesCSV } from '@/lib/utils/csv'
 import { revalidatePath } from 'next/cache'
+import { chequearRol } from '@/lib/auth/session'
 
 const ClienteSchema = z.object({
   nombre: z.string().min(1, 'El nombre es requerido').max(200),
@@ -22,6 +23,9 @@ export async function crearClienteAction(
   _prevState: ActionState,
   formData: FormData
 ): Promise<ActionState> {
+  const permiso = await chequearRol('admin')
+  if (!permiso.ok) return { error: permiso.error }
+
   const raw = {
     nombre: formData.get('nombre') as string,
     telefono: formData.get('telefono') as string,
@@ -48,6 +52,9 @@ export async function importarClientesCSVAction(
   _prevState: ImportState,
   formData: FormData
 ): Promise<ImportState> {
+  const permiso = await chequearRol('admin')
+  if (!permiso.ok) return { error: permiso.error }
+
   const file = formData.get('archivo') as File | null
   if (!file || file.size === 0) return { error: 'Selecciona un archivo CSV.' }
 

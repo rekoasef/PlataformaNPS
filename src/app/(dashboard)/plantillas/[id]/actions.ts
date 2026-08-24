@@ -8,11 +8,15 @@ import {
   getPlantillaById,
 } from '@/modules/plantillas/services/plantillas.service'
 import type { Pregunta } from '@/modules/plantillas/types/plantilla.types'
+import { chequearRol, requireRol } from '@/lib/auth/session'
 
 export async function actualizarPlantillaAction(
   _prev: { error?: string; success?: boolean },
   formData: FormData,
 ): Promise<{ error?: string; success?: boolean }> {
+  const permiso = await chequearRol('admin')
+  if (!permiso.ok) return { error: permiso.error }
+
   const id = formData.get('id') as string
   const nombre = (formData.get('nombre') as string | null)?.trim()
   const introduccion = (formData.get('introduccion') as string | null)?.trim() ?? ''
@@ -37,6 +41,9 @@ export async function actualizarPlantillaAction(
 }
 
 export async function eliminarPlantillaAction(id: string): Promise<void> {
+  // Devuelve void: no hay `{ error }` que mostrar, así que acá se tira.
+  await requireRol('admin')
+
   const plantilla = await getPlantillaById(id)
   if (!plantilla || plantilla.es_sistema) throw new Error('No se puede eliminar esta plantilla.')
   await deletePlantilla(id)

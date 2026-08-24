@@ -8,6 +8,7 @@ import {
   marcarRecordatorioEnviado,
   puedeCrearRecordatorio,
 } from '@/modules/recordatorios/services/recordatorios.service'
+import { chequearRol } from '@/lib/auth/session'
 
 type ActionState = { error?: string }
 
@@ -24,6 +25,9 @@ export async function crearRecordatorioAction(
   _prevState: ActionState,
   formData: FormData
 ): Promise<ActionState> {
+  const acceso = await chequearRol('admin')
+  if (!acceso.ok) return { error: acceso.error }
+
   const parsed = CampanaIdSchema.safeParse({
     campanaId: formData.get('campanaId'),
   })
@@ -52,6 +56,9 @@ export async function confirmarEnvioRecordatorioAction(
   _prevState: ActionState,
   formData: FormData
 ): Promise<ActionState> {
+  const acceso = await chequearRol('admin')
+  if (!acceso.ok) return { error: acceso.error }
+
   const parsed = ConfirmarSchema.safeParse({
     campanaId: formData.get('campanaId'),
     numeroRecordatorio: formData.get('numeroRecordatorio'),

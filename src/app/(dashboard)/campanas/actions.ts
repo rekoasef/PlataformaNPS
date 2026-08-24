@@ -52,6 +52,12 @@ export async function crearCampanaAction(
   _prevState: ActionState,
   formData: FormData
 ): Promise<ActionState> {
+  try {
+    await getRoleOrThrow()
+  } catch {
+    return { error: 'No tenés permisos para crear campañas.' }
+  }
+
   const raw = {
     nombre:           formData.get('nombre') as string,
     fecha:            formData.get('fecha') as string,
@@ -149,6 +155,12 @@ export async function cambiarEstadoCampanaAction(
   _prevState: ActionState,
   formData: FormData
 ): Promise<ActionState> {
+  try {
+    await getRoleOrThrow()
+  } catch {
+    return { error: 'No tenés permisos para cambiar el estado de una campaña.' }
+  }
+
   const parsed = CambiarEstadoSchema.safeParse({
     id: formData.get('campana_id'),
     estado: formData.get('estado'),
@@ -171,6 +183,12 @@ export async function eliminarCampanaAction(
   _prevState: ActionState,
   formData: FormData
 ): Promise<ActionState> {
+  try {
+    await getRoleOrThrow()
+  } catch {
+    return { error: 'No tenés permisos para eliminar campañas.' }
+  }
+
   const parsed = EliminarCampanaSchema.safeParse({
     id: formData.get('campana_id'),
   })

@@ -1,17 +1,15 @@
 import { NextResponse } from 'next/server'
 import { getJobConDetalle } from '@/modules/whatsapp/services/whatsapp.service'
-import { getUsuarioActual } from '@/lib/auth/session'
+import { rechazarSiNoAutorizado } from '@/lib/auth/api'
 
 export async function GET(
   _req: Request,
   { params }: { params: Promise<{ id: string }> },
 ) {
-  // El middleware solo mira que exista la cookie, no que sea válida — la
-  // verificación real va acá, como en el resto de la app. Sin esto, la
-  // respuesta filtra celulares y las URLs con el token de cada encuesta.
-  if (!(await getUsuarioActual())) {
-    return NextResponse.json({ error: 'No autorizado' }, { status: 401 })
-  }
+  // La respuesta trae celulares y las URLs con el token de cada encuesta, así
+  // que no alcanza con que haya sesión: se exige el rol de /whatsapp.
+  const rechazo = await rechazarSiNoAutorizado('/whatsapp')
+  if (rechazo) return rechazo
 
   const { id } = await params
   const job = await getJobConDetalle(id)

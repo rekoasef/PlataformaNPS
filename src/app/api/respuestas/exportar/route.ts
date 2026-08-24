@@ -3,12 +3,13 @@ import { generarCSVRespuestas } from '@/lib/utils/exportar'
 import { formatTecnologia, normalizeTecnologiaInput } from '@/lib/utils/tecnologia'
 import { getRespuestas } from '@/modules/dashboard/services/dashboard.service'
 import { normalizeNpsAnswerStatus, normalizeNpsDimension } from '@/modules/dashboard/utils/nps'
-import { getUsuarioActual } from '@/lib/auth/session'
+import { rechazarSiNoAutorizado } from '@/lib/auth/api'
 
 export async function GET(request: Request) {
-  if (!(await getUsuarioActual())) {
-    return NextResponse.json({ error: 'No autorizado' }, { status: 401 })
-  }
+  // El CSV lleva datos personales de los clientes (email, teléfono, domicilio),
+  // así que se pide el mismo rol que para ver la página /respuestas.
+  const rechazo = await rechazarSiNoAutorizado('/respuestas')
+  if (rechazo) return rechazo
 
   const { searchParams } = new URL(request.url)
   const q = searchParams.get('q') ?? undefined

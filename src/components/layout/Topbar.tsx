@@ -39,7 +39,6 @@ export default async function Topbar({ title, className, role = 'admin' }: Topba
         <NotificacionesBell
           notificaciones={notificaciones}
           unreadCount={unreadCount}
-          rol={role}
         />
 
         <div className="mx-1 h-4 w-px bg-border" aria-hidden />

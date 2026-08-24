@@ -10,6 +10,7 @@ import {
   crearJob,
   detenerJob,
 } from '@/modules/whatsapp/services/whatsapp.service'
+import { chequearRol } from '@/lib/auth/session'
 
 type ActionState = { error?: string; success?: boolean; id?: string }
 
@@ -34,6 +35,9 @@ export async function crearPlantillaAction(
   _prev: ActionState,
   formData: FormData,
 ): Promise<ActionState> {
+  const permiso = await chequearRol('admin')
+  if (!permiso.ok) return { error: permiso.error }
+
   const lineasRaw = formData.get('lineas') as string
   let lineas: string[]
   try {
@@ -63,6 +67,9 @@ export async function editarPlantillaAction(
   _prev: ActionState,
   formData: FormData,
 ): Promise<ActionState> {
+  const permiso = await chequearRol('admin')
+  if (!permiso.ok) return { error: permiso.error }
+
   const id = formData.get('id') as string
   if (!id) return { error: 'ID requerido' }
 
@@ -93,6 +100,9 @@ export async function editarPlantillaAction(
 }
 
 export async function archivarPlantillaAction(id: string): Promise<ActionState> {
+  const permiso = await chequearRol('admin')
+  if (!permiso.ok) return { error: permiso.error }
+
   try {
     await archivarPlantilla(id)
     revalidatePath('/whatsapp/plantillas')
@@ -103,6 +113,9 @@ export async function archivarPlantillaAction(id: string): Promise<ActionState> 
 }
 
 export async function duplicarPlantillaAction(id: string): Promise<ActionState> {
+  const permiso = await chequearRol('admin')
+  if (!permiso.ok) return { error: permiso.error }
+
   try {
     const nueva = await duplicarPlantilla(id)
     revalidatePath('/whatsapp/plantillas')
@@ -118,6 +131,9 @@ export async function crearJobAction(
   _prev: ActionState,
   formData: FormData,
 ): Promise<ActionState> {
+  const permiso = await chequearRol('admin')
+  if (!permiso.ok) return { error: permiso.error }
+
   const parsed = CrearJobSchema.safeParse({
     campana_id:        formData.get('campana_id'),
     plantilla_id:      formData.get('plantilla_id'),
@@ -140,6 +156,9 @@ export async function crearJobAction(
 }
 
 export async function detenerJobAction(jobId: string): Promise<ActionState> {
+  const permiso = await chequearRol('admin')
+  if (!permiso.ok) return { error: permiso.error }
+
   try {
     await detenerJob(jobId)
     revalidatePath(`/whatsapp/jobs/${jobId}`)

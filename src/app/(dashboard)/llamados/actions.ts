@@ -9,7 +9,7 @@ import {
   marcarEncuestaSinRespuesta,
   revertirEncuestaANecesidadLlamado,
 } from '@/modules/recordatorios/services/recordatorios.service'
-import { getUsuarioActual } from '@/lib/auth/session'
+import { chequearRol } from '@/lib/auth/session'
 
 type ActionState = { error?: string; success?: boolean }
 
@@ -57,6 +57,9 @@ export async function agregarMedidaAction(
   _prevState: ActionState,
   formData: FormData
 ): Promise<ActionState> {
+  const permiso = await chequearRol('admin')
+  if (!permiso.ok) return { error: permiso.error }
+
   const parsed = MedidaSchema.safeParse({
     encuestaId: formData.get('encuestaId'),
     comentario: formData.get('comentario'),
@@ -66,7 +69,7 @@ export async function agregarMedidaAction(
     return { error: parsed.error.issues[0]?.message ?? 'Datos inválidos.' }
   }
 
-  const creadoPor = (await getUsuarioActual())?.id ?? null
+  const creadoPor = permiso.usuario.id
 
   try {
     await agregarMedidaLlamado(parsed.data.encuestaId, parsed.data.comentario, creadoPor)
@@ -82,6 +85,9 @@ export async function editarMedidaAction(
   _prevState: ActionState,
   formData: FormData
 ): Promise<ActionState> {
+  const permiso = await chequearRol('admin')
+  if (!permiso.ok) return { error: permiso.error }
+
   const parsed = EditarMedidaSchema.safeParse({
     medidaId: formData.get('medidaId'),
     comentario: formData.get('comentario'),
@@ -106,6 +112,9 @@ export async function eliminarMedidaAction(
   _prevState: ActionState,
   formData: FormData
 ): Promise<ActionState> {
+  const permiso = await chequearRol('admin')
+  if (!permiso.ok) return { error: permiso.error }
+
   const parsed = EliminarMedidaSchema.safeParse({
     medidaId: formData.get('medidaId'),
   })
@@ -129,6 +138,9 @@ export async function marcarSinRespuestaAction(
   _prevState: ActionState,
   formData: FormData
 ): Promise<ActionState> {
+  const permiso = await chequearRol('admin')
+  if (!permiso.ok) return { error: permiso.error }
+
   const parsed = Schema.safeParse({
     encuestaId: formData.get('encuestaId'),
     comentario: formData.get('comentario'),
@@ -138,7 +150,7 @@ export async function marcarSinRespuestaAction(
     return { error: parsed.error.issues[0]?.message ?? 'Datos inválidos.' }
   }
 
-  const marcadoPor = (await getUsuarioActual())?.id ?? null
+  const marcadoPor = permiso.usuario.id
 
   try {
     await marcarEncuestaSinRespuesta(parsed.data.encuestaId, parsed.data.comentario, marcadoPor)
@@ -156,6 +168,9 @@ export async function revertirNecesidadLlamadoAction(
   _prevState: ActionState,
   formData: FormData
 ): Promise<ActionState> {
+  const permiso = await chequearRol('admin')
+  if (!permiso.ok) return { error: permiso.error }
+
   const parsed = RevertirSchema.safeParse({
     encuestaId: formData.get('encuestaId'),
     comentario: formData.get('comentario'),
@@ -165,7 +180,7 @@ export async function revertirNecesidadLlamadoAction(
     return { error: parsed.error.issues[0]?.message ?? 'Datos inválidos.' }
   }
 
-  const revertidoPor = (await getUsuarioActual())?.id ?? null
+  const revertidoPor = permiso.usuario.id
 
   try {
     await revertirEncuestaANecesidadLlamado(

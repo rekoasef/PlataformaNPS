@@ -18,7 +18,6 @@ import type { Notificacion, NotificacionTipo } from '../types/notificacion.types
 interface Props {
   notificaciones: Notificacion[]
   unreadCount: number
-  rol: string
 }
 
 const TIPO_CONFIG: Record<NotificacionTipo, {
@@ -63,7 +62,7 @@ function tiempoRelativo(dateStr: string): string {
   return `Hace ${Math.floor(hrs / 24)}d`
 }
 
-export default function NotificacionesBell({ notificaciones: initial, unreadCount: initialCount, rol }: Props) {
+export default function NotificacionesBell({ notificaciones: initial, unreadCount: initialCount }: Props) {
   const [open, setOpen] = useState(false)
   const [items, setItems] = useState(initial)
   const [badge, setBadge] = useState(initialCount)
@@ -74,7 +73,7 @@ export default function NotificacionesBell({ notificaciones: initial, unreadCoun
     if (badge > 0) {
       setBadge(0)
       setItems(prev => prev.map(n => ({ ...n, leida: true })))
-      startTransition(() => { marcarTodasLeidasAction(rol) })
+      startTransition(() => { marcarTodasLeidasAction() })
     }
   }
 

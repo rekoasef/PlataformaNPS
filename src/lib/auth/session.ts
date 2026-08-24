@@ -50,3 +50,27 @@ export async function requireRol(...roles: UserRole[]): Promise<UsuarioSesion> {
   }
   return usuario
 }
+
+/**
+ * Igual que `requireRol` pero devuelve el error como valor en vez de tirarlo,
+ * para los server actions que responden `{ error }` y lo muestran en el form.
+ *
+ * Va como primera línea del action, **antes** de cualquier `try`: adentro de un
+ * `try` el `catch` se la come y el action sigue como si tuviera permiso.
+ *
+ *     const permiso = await chequearRol('admin')
+ *     if (!permiso.ok) return { error: permiso.error }
+ *
+ * En el caso `ok` viene además el usuario, para los actions que necesitan
+ * guardar quién hizo la operación sin volver a consultar la sesión.
+ */
+export async function chequearRol(
+  ...roles: UserRole[]
+): Promise<{ ok: false; error: string } | { ok: true; usuario: UsuarioSesion }> {
+  const usuario = await getUsuarioActual()
+  if (!usuario) return { ok: false, error: 'Tenés que iniciar sesión.' }
+  if (usuario.role !== 'admin' && !roles.includes(usuario.role)) {
+    return { ok: false, error: 'No tenés permisos para esta acción.' }
+  }
+  return { ok: true, usuario }
+}

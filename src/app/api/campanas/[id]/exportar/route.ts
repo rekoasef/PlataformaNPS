@@ -3,16 +3,17 @@ import { campanas, clientes, encuestas } from '@/lib/db/schema'
 import { and, eq, inArray } from 'drizzle-orm'
 import { generarCSVPendientes } from '@/lib/utils/exportar'
 import { NextResponse } from 'next/server'
-import { getUsuarioActual } from '@/lib/auth/session'
+import { rechazarSiNoAutorizado } from '@/lib/auth/api'
 
 export async function GET(
   _request: Request,
   { params }: { params: Promise<{ id: string }> }
 ) {
-  // Verificar autenticación
-  if (!(await getUsuarioActual())) {
-    return NextResponse.json({ error: 'No autorizado' }, { status: 401 })
-  }
+  // Sesión y rol: el CSV incluye el link con el token de cada encuesta, que
+  // permite responder en nombre del cliente. Es la página /campanas la que
+  // define quién puede verlo.
+  const rechazo = await rechazarSiNoAutorizado('/campanas')
+  if (rechazo) return rechazo
 
   const { id } = await params
 

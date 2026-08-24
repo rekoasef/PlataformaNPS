@@ -49,6 +49,12 @@ export async function actualizarConfiguracionAction(
   _prevState: ActionState,
   formData: FormData
 ): Promise<ActionState> {
+  try {
+    await requireAdmin()
+  } catch (e) {
+    return { error: (e as Error).message }
+  }
+
   const raw = {
     id: formData.get('id'),
     dias_notificacion_inicial: formData.get('dias_notificacion_inicial'),
@@ -93,6 +99,12 @@ export async function enviarEmailPruebaAction(
   _prevState: TestActionState,
   formData: FormData
 ): Promise<TestActionState> {
+  try {
+    await requireAdmin()
+  } catch (e) {
+    return { error: (e as Error).message }
+  }
+
   const emailSchema = z.object({
     to: z.string().email('Ingresa un email válido para la prueba.').optional().or(z.literal('')),
   })
@@ -136,6 +148,12 @@ export async function enviarEmailPruebaRamblaAction(
   _prevState: TestActionState,
   formData: FormData
 ): Promise<TestActionState> {
+  try {
+    await requireAdmin()
+  } catch (e) {
+    return { error: (e as Error).message }
+  }
+
   const emailSchema = z.object({
     to: z.string().email('Ingresa un email válido para la prueba.').optional().or(z.literal('')),
   })
