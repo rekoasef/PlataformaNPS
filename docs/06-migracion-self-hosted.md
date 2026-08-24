@@ -113,7 +113,19 @@ Todo el desarrollo de la migración se hace **en paralelo a producción, sin toc
 
    **Pendiente propio, no delegable:** la **prueba de restauración**. IT puede restaurar; el único que puede decir si la base quedó *correcta* es este lado — conteos por tabla y checksum de contenido (el mismo método de la sección 8), más levantar la app contra la copia restaurada. Un backup que nunca se restauró no se sabe si sirve.
 
-   **Interino mientras IT responde:** `pg_dump` manual por el túnel SSH, guardado fuera de la VPS. No es un sistema de backups (no es automático ni tiene retención), pero baja el piso de "si se muere la VPS perdemos todo" a "perdemos desde el último dump". Ojo que ese archivo lleva datos personales de clientes reales — no dejarlo suelto en cualquier carpeta.
+   **Interino, hecho el 2026-08-24:** `pg_dump` manual bajado por SSH a la máquina de desarrollo (`~/backups-nps/`, permisos 600, directorio 700). No es un sistema de backups (no es automático ni tiene retención), pero baja el piso de "si se muere la VPS perdemos todo" a "perdemos desde el último dump". Ojo que ese archivo lleva datos personales de clientes reales.
+
+   No hace falta túnel: el dump se puede streamear directo por SSH sin dejar archivos intermedios en la VPS.
+
+   ```bash
+   ssh -T -p 5399 posventa@200.58.99.137 \
+     "docker exec npsplatform_postgres_staging pg_dump -U nps_staging -d npsplatform_staging -Fc" \
+     > npsplatform_staging_$(date +%F).dump
+   ```
+
+   **Restauración probada el 2026-08-24**, contra un `postgres:16` descartable local: restauración con exit 0 y sin warnings, las **17 tablas** (13 del schema original + 4 de Better Auth) con conteos **idénticos** a staging, las 3 vistas y las 6 funciones presentes —incluidas `sync_encuestas_necesidad_llamado` y `check_campanas_sin_actividad`, de las que dependen los jobs de cron— y `v_encuestas_completas` consultable. O sea que el camino dump → restore funciona de punta a punta; falta probar el de IT cuando lo tengan armado.
+
+   **Gotcha de versiones, importante para el cutover:** las herramientas de Postgres de la máquina de desarrollo son **17.9** y los servidores son **16.x**. Restaurar con el `pg_restore` local falla con `unrecognized configuration parameter "transaction_timeout"` (parámetro que existe desde PG 17; lo emite el cliente 17 en su preámbulo y el servidor 16 lo rechaza). El dump está bien — el problema es la versión del cliente. Hay que correr `pg_restore` **dentro de un contenedor `postgres:16`**. Sin `--exit-on-error` esto queda como "1 error ignorado" y la restauración parece haber salido, que es la forma peligrosa de fallar.
 
    **Dos trampas conocidas, para no volver a discutirlas:** un backup en la misma VPS no protege contra perder la VPS, y copiar los archivos de un Postgres corriendo puede dar una copia inconsistente que no arranca (por eso `pg_dump` y no copiar el volumen).
 
